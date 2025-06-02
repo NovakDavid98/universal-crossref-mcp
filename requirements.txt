@@ -37,6 +37,13 @@ psutil>=5.9.0
 # Character encoding detection
 chardet>=5.2.0
 
+# PDF Processing Dependencies (Phase 1.2)
+pytesseract>=0.3.10
+pdf2image>=1.16.3
+Pillow>=10.0.1
+PyPDF2>=3.0.1
+pdfplumber>=0.9.0
+
 # Development tools
 black>=23.12.0
 isort>=5.13.0

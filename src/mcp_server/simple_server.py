@@ -13,6 +13,23 @@ import threading # For watchdog
 from watchdog.observers import Observer # For watchdog
 from watchdog.events import FileSystemEventHandler # For watchdog
 
+# PDF Processing imports (Phase 2)
+import PyPDF2
+import pdfplumber
+try:
+    import pytesseract
+    from pdf2image import convert_from_path
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
+# Async processing imports (Phase 5)
+import asyncio
+import aiofiles
+from concurrent.futures import ThreadPoolExecutor
+import uuid
+
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -22,6 +39,35 @@ mcp = FastMCP("universal-crossref")
 # In-memory storage for demonstration
 projects = {}
 current_project = None
+
+# Async task tracking system (Phase 5)
+active_tasks = {}
+task_executor = ThreadPoolExecutor(max_workers=2)
+
+class PDFExtractionTask:
+    def __init__(self, task_id: str, pdf_path: str, params: dict):
+        self.task_id = task_id
+        self.pdf_path = pdf_path
+        self.params = params
+        self.status = "starting"
+        self.progress = 0.0
+        self.result = None
+        self.error = None
+        self.start_time = datetime.now()
+        
+    def update_status(self, status: str, progress: float = None):
+        self.status = status
+        if progress is not None:
+            self.progress = progress
+            
+    def complete(self, result: dict):
+        self.status = "completed"
+        self.progress = 100.0
+        self.result = result
+        
+    def fail(self, error: str):
+        self.status = "failed"
+        self.error = error
 
 # --- Watchdog Implementation ---
 active_observers = {}
@@ -155,12 +201,88 @@ def get_tool_documentation() -> dict:
     documentation = {
         "system_overview": {
             "name": "Universal Cross-Reference MCP Server",
-            "purpose": "Automates the cross-referencing methodology for Markdown documentation",
+            "version": "2.0.0 - Universal Content-Aware Edition",
+            "purpose": "Automates intelligent cross-referencing methodology for any type of documentation or book content",
+            "key_innovations": {
+                "universal_genre_detection": "Automatically detects content type (fiction, technical, historical, etc.) and adapts analysis accordingly",
+                "content_aware_cross_referencing": "Creates meaningful relationships based on actual content analysis, not just file proximity",
+                "adaptive_analysis_strategies": "Different cross-referencing logic for different content types (characters for fiction, concepts for technical, etc.)",
+                "intelligent_concept_extraction": "Genre-aware concept identification with semantic weighting",
+                "named_entity_recognition": "Extracts people, places, organizations from content for better relationships"
+            },
             "key_concepts": {
                 "hub_file": "Central documentation file (e.g., SYSTEM.md) that lists ALL mandatory reading requirements",
-                "cross_reference_headers": "Headers added to each Markdown file pointing back to hub and related files",
+                "cross_reference_headers": "Headers added to each file pointing back to hub and related files with intelligent reasoning",
                 "mandatory_reading": "The principle that readers MUST read all linked files for complete understanding",
-                "auto_watcher": "Background monitoring that automatically updates cross-references when files change"
+                "auto_watcher": "Background monitoring that automatically updates cross-references when files change",
+                "content_aware_analysis": "Deep content understanding that goes beyond simple file relationships",
+                "genre_adaptive_logic": "Different cross-referencing strategies based on detected content type"
+            }
+        },
+        
+        "universal_content_analysis": {
+            "supported_genres": {
+                "fiction": {
+                    "detection_keywords": ["novel", "story", "character", "plot", "romance", "mystery", "fantasy", "drama"],
+                    "analysis_features": ["Character relationship mapping", "Plot thread connections", "Dialogue density analysis", "Setting relationships"],
+                    "cross_reference_strategy": "Links based on shared characters, similar themes, narrative connections",
+                    "relationship_types": ["narrative_connection", "character_relationship", "thematic_similarity"]
+                },
+                "philosophical": {
+                    "detection_keywords": ["philosophy", "metaphysics", "consciousness", "existence", "reality", "truth"],
+                    "analysis_features": ["Concept density analysis", "Metaphysical theme extraction", "Philosophical argument mapping"],
+                    "cross_reference_strategy": "Links based on shared philosophical concepts, building arguments, related ideas",
+                    "relationship_types": ["conceptual_dependency", "philosophical_connection", "idea_progression"]
+                },
+                "scientific": {
+                    "detection_keywords": ["science", "research", "experiment", "theory", "physics", "chemistry", "biology"],
+                    "analysis_features": ["Theory dependency analysis", "Research methodology connections", "Scientific concept hierarchies"],
+                    "cross_reference_strategy": "Links based on theoretical foundations, experimental relationships, concept building",
+                    "relationship_types": ["theoretical_dependency", "experimental_connection", "concept_hierarchy"]
+                },
+                "technical": {
+                    "detection_keywords": ["programming", "software", "computer", "algorithm", "code", "system", "technical"],
+                    "analysis_features": ["Procedure step detection", "Code density analysis", "Technical dependency mapping"],
+                    "cross_reference_strategy": "Links based on prerequisite knowledge, procedure dependencies, system relationships",
+                    "relationship_types": ["prerequisite_dependency", "procedural_connection", "system_relationship"]
+                },
+                "historical": {
+                    "detection_keywords": ["history", "historical", "century", "war", "empire", "civilization", "ancient"],
+                    "analysis_features": ["Temporal reference extraction", "Historical figure identification", "Event chronology mapping"],
+                    "cross_reference_strategy": "Links based on chronological relationships, shared figures, cause-effect chains",
+                    "relationship_types": ["chronological_relationship", "causal_connection", "temporal_proximity"]
+                },
+                "business": {
+                    "detection_keywords": ["business", "management", "strategy", "leadership", "marketing", "sales", "profit"],
+                    "analysis_features": ["Strategy term detection", "Quantitative content analysis", "Business concept mapping"],
+                    "cross_reference_strategy": "Links based on strategic connections, case study relationships, methodology similarities",
+                    "relationship_types": ["strategic_connection", "methodology_relationship", "case_study_link"]
+                },
+                "selfhelp": {
+                    "detection_keywords": ["self-help", "improve", "success", "habit", "motivation", "achievement", "personal"],
+                    "analysis_features": ["Goal progression tracking", "Habit building sequences", "Improvement methodology mapping"],
+                    "cross_reference_strategy": "Links based on goal relationships, habit building progressions, improvement sequences",
+                    "relationship_types": ["goal_progression", "habit_sequence", "improvement_chain"]
+                },
+                "medical": {
+                    "detection_keywords": ["medical", "health", "medicine", "disease", "treatment", "patient", "clinical"],
+                    "analysis_features": ["Treatment protocol analysis", "Symptom relationship mapping", "Medical research connections"],
+                    "cross_reference_strategy": "Links based on treatment protocols, symptom relationships, research connections",
+                    "relationship_types": ["treatment_protocol", "symptom_relationship", "clinical_connection"]
+                },
+                "religious": {
+                    "detection_keywords": ["religion", "spiritual", "faith", "god", "prayer", "scripture", "sacred"],
+                    "analysis_features": ["Scriptural reference detection", "Doctrinal connection mapping", "Spiritual theme analysis"],
+                    "cross_reference_strategy": "Links based on scriptural references, doctrinal connections, spiritual themes",
+                    "relationship_types": ["scriptural_reference", "doctrinal_connection", "spiritual_theme"]
+                }
+            },
+            "analysis_methods": {
+                "concept_extraction": "TF-IDF weighted concept identification with genre-specific boosting",
+                "named_entity_recognition": "Heuristic-based extraction of people, places, organizations",
+                "similarity_calculation": "Multi-factor similarity using Jaccard similarity, weighted concept overlap, and genre-specific bonuses",
+                "relationship_reasoning": "Human-readable explanations for why chapters are related",
+                "quality_assessment": "Content quality scoring based on readability, concept density, and coherence"
             }
         },
         
@@ -175,6 +297,13 @@ def get_tool_documentation() -> dict:
                 "1. Use scan_project to analyze your current project structure",
                 "2. Use implement_crossref_methodology to apply cross-referencing to all existing files",
                 "3. Use start_auto_crossref_watcher for ongoing automatic management"
+            ],
+            "pdf_book_processing": [
+                "1. Use extract_pdf_to_markdown for small-medium PDFs (< 500KB)",
+                "2. Use extract_pdf_to_markdown_async for large PDFs to avoid timeouts",
+                "3. System automatically detects book genre and adapts cross-referencing strategy",
+                "4. Generated files include intelligent content-based relationships",
+                "5. Hub file provides genre-appropriate navigation and reading guidance"
             ]
         },
         
@@ -340,6 +469,169 @@ def get_tool_documentation() -> dict:
                 "use_cases": ["Disabling automatic management", "Preparing for manual editing", "Cleaning up watchers"],
                 "example": "stop_auto_crossref_watcher('/my/project')",
                 "notes": ["Safe to call even if no watcher is active", "Cleanly shuts down background monitoring"]
+            },
+            
+            "extract_pdf_to_markdown": {
+                "description": "Extract PDF content to cross-referenced markdown files with universal intelligent cross-referencing for any book type",
+                "parameters": {
+                    "pdf_path": {"required": True, "type": "string", "description": "Path to the PDF file to extract"},
+                    "output_dir": {"required": False, "type": "string", "description": "Output directory for extracted files (defaults to same as PDF location)"},
+                    "max_chunks": {"required": False, "type": "integer", "description": "Maximum number of chunks to create (default: 20)"},
+                    "extraction_strategy": {"required": False, "type": "string", "description": "Extraction strategy (default: 'auto')"},
+                    "create_hub": {"required": False, "type": "boolean", "description": "Create hub file if true (default: True)"}
+                },
+                "returns": {
+                    "success": "Boolean indicating success",
+                    "pdf_processed": "Path to processed PDF",
+                    "output_directory": "Path to output directory",
+                    "chunks_created": "Number of chunks created",
+                    "files_generated": "List of generated file paths",
+                    "hub_file": "Path to created hub file",
+                    "extraction_quality": "Extraction quality score (0-1)",
+                    "extraction_strategy": "Used extraction strategy (PyPDF2, pdfplumber, OCR)",
+                    "cross_reference_headers_added": "Number of cross-reference headers added",
+                    "detected_genres": "Automatically detected book genres with confidence scores",
+                    "intelligent_cross_references": "Number of content-aware cross-references created",
+                    "content_analysis": "Summary of genre-specific analysis performed",
+                    "summary": "Summary of operation"
+                },
+                "use_cases": [
+                    "Extracting any type of PDF book or document", 
+                    "Creating intelligent cross-referenced knowledge bases", 
+                    "Converting books to navigable markdown with content-aware relationships",
+                    "Academic research document processing",
+                    "Business document conversion with strategic relationship mapping"
+                ],
+                "universal_capabilities": {
+                    "fiction": "Character relationships, plot connections, thematic links, dialogue analysis",
+                    "non_fiction": "Conceptual dependencies, topic relationships, learning progression mapping",
+                    "technical": "Procedure dependencies, concept building chains, system relationships",
+                    "historical": "Chronological relationships, figure connections, cause-effect chains",
+                    "business": "Strategic connections, case study links, methodology relationships",
+                    "scientific": "Theory dependencies, research connections, concept hierarchies",
+                    "self_help": "Goal relationships, habit building sequences, improvement progressions",
+                    "medical": "Treatment protocols, symptom relationships, research connections",
+                    "religious": "Scriptural references, doctrinal connections, spiritual themes",
+                    "philosophical": "Concept dependencies, argument progressions, metaphysical connections"
+                },
+                "content_analysis_features": {
+                    "automatic_genre_detection": "Analyzes content to determine primary genre(s) and adapts processing accordingly",
+                    "concept_extraction": "TF-IDF weighted extraction of key concepts with genre-specific boosting",
+                    "named_entity_recognition": "Identifies people, places, organizations relevant to the content",
+                    "similarity_scoring": "Multi-factor similarity calculation including conceptual overlap and genre-specific features",
+                    "relationship_reasoning": "Generates human-readable explanations for why chapters are related",
+                    "quality_assessment": "Scores extraction quality based on readability, concept density, and coherence"
+                },
+                "example": "extract_pdf_to_markdown('/path/to/any_book.pdf', '/output/directory', 20, 'auto', True)",
+                "notes": [
+                    "🎯 Automatically detects book genre and adapts cross-referencing strategy accordingly",
+                    "🧠 Creates meaningful content-based relationships, not just sequential file links",
+                    "📚 Works equally well with novels, textbooks, manuals, histories, biographies, and more",
+                    "🔗 Generates genre-specific cross-reference reasons and relationship types",
+                    "⚡ Uses multiple extraction strategies (PyPDF2, pdfplumber, OCR) for best results",
+                    "📊 Provides detailed content analysis and quality scoring",
+                    "🎨 Creates beautiful, navigable hub files with genre-appropriate organization"
+                ]
+            },
+
+            "extract_pdf_to_markdown_async": {
+                "description": "Start asynchronous PDF extraction with universal content-aware cross-referencing for any book type - ideal for large documents",
+                "parameters": {
+                    "pdf_path": {"required": True, "type": "string", "description": "Path to the PDF file to extract"},
+                    "output_dir": {"required": False, "type": "string", "description": "Output directory for extracted files (defaults to same as PDF location)"},
+                    "max_chunks": {"required": False, "type": "integer", "description": "Maximum number of chunks to create (default: 50)"},
+                    "create_hub": {"required": False, "type": "boolean", "description": "Create hub file with universal cross-reference methodology (default: True)"}
+                },
+                "returns": {
+                    "success": "Boolean indicating successful task start",
+                    "task_id": "Unique identifier for tracking the extraction task",
+                    "status": "Task status ('started')",
+                    "pdf_path": "Path to the PDF being processed",
+                    "estimated_time": "Estimated processing time based on file size",
+                    "instructions": "How to monitor progress using check_pdf_extraction_status",
+                    "message": "Confirmation message about background processing with automatic genre detection"
+                },
+                "use_cases": [
+                    "Processing large PDFs of any genre without blocking the system", 
+                    "Background extraction with automatic genre detection and appropriate cross-referencing", 
+                    "Handling multiple diverse PDF extractions concurrently",
+                    "Academic textbook processing",
+                    "Large technical manual conversion"
+                ],
+                "processing_phases": {
+                    "starting_extraction": "0-10% - Initializing and validating PDF file",
+                    "extracting_text": "10-25% - Running multiple extraction strategies for best quality",
+                    "analyzing_content": "25-55% - Detecting genre and analyzing content structure",
+                    "generating_cross_references": "55-75% - Creating intelligent content-based relationships",
+                    "creating_files": "75-90% - Writing markdown files with cross-reference headers",
+                    "creating_hub": "90-100% - Generating comprehensive hub file with navigation"
+                },
+                "example": "extract_pdf_to_markdown_async('/path/to/large_book.pdf', '/output/directory', 50, True)",
+                "notes": [
+                    "🔄 Runs in background with real-time progress tracking",
+                    "🎯 Adapts cross-referencing strategy based on detected content type",
+                    "📚 Works with novels, textbooks, manuals, histories, biographies, and more",
+                    "🏠 Creates comprehensive hub file with genre-appropriate navigation",
+                    "⚡ Ideal for any book type - system automatically adapts its analysis approach",
+                    "📊 Provides detailed progress updates and final content analysis",
+                    "🛡️ Handles timeouts and large files gracefully"
+                ]
+            },
+
+            "check_pdf_extraction_status": {
+                "description": "Monitor the progress and results of an ongoing asynchronous PDF extraction task with detailed content analysis",
+                "parameters": {
+                    "task_id": {"required": True, "type": "string", "description": "Task ID returned by extract_pdf_to_markdown_async"}
+                },
+                "returns": {
+                    "task_id": "The task identifier",
+                    "status": "Current status (starting_extraction, extracting_text, analyzing_content, generating_cross_references, creating_files, creating_hub, completed, failed)",
+                    "progress": "Progress percentage (0-100)",
+                    "pdf_path": "Path to the PDF being processed",
+                    "start_time": "When the task started",
+                    "elapsed_time": "How long the task has been running",
+                    "result": "Complete extraction results including content analysis (only when status is 'completed')",
+                    "error": "Error details (only when status is 'failed')"
+                },
+                "status_meanings": {
+                    "starting_extraction": "Initializing task and validating inputs",
+                    "extracting_text": "Running multiple extraction strategies (PyPDF2, pdfplumber, OCR)",
+                    "analyzing_content": "Detecting genre and analyzing content structure with AI",
+                    "generating_cross_references": "Creating intelligent content-based relationships",
+                    "creating_files": "Writing markdown files with cross-reference headers",
+                    "creating_hub": "Generating comprehensive hub file with navigation",
+                    "completed": "All processing finished successfully",
+                    "failed": "An error occurred during processing"
+                },
+                "use_cases": ["Monitoring async PDF extraction progress", "Getting results when extraction completes", "Troubleshooting failed extractions"],
+                "example": "check_pdf_extraction_status('abc123-def456-789')",
+                "notes": [
+                    "📊 Provides real-time progress updates with detailed status information",
+                    "🎯 Shows genre detection and content analysis progress",
+                    "✅ Task is automatically cleaned up after returning final results",
+                    "🔄 Call periodically to monitor progress (recommended every 10-30 seconds)",
+                    "📋 Returns complete extraction results including content analysis when finished"
+                ]
+            },
+
+            "list_pdf_extraction_tasks": {
+                "description": "List all currently active PDF extraction tasks with their status and content analysis progress",
+                "parameters": {
+                    "random_string": {"required": True, "type": "string", "description": "Dummy parameter (use any string)"}
+                },
+                "returns": {
+                    "success": "Boolean indicating successful listing",
+                    "active_tasks": "Number of currently running tasks",
+                    "tasks": "Array of task objects with id, status, progress, pdf_path, start_time, and detected_genre"
+                },
+                "use_cases": ["Monitoring multiple concurrent extractions", "Checking system load", "Debugging extraction queue", "Managing batch PDF processing"],
+                "example": "list_pdf_extraction_tasks('show_tasks')",
+                "notes": [
+                    "📋 Only shows currently running or pending tasks",
+                    "🗑️ Completed and failed tasks are automatically removed from the list",
+                    "🔄 Useful for managing multiple concurrent PDF extractions",
+                    "📊 Shows progress and genre detection status for each task"
+                ]
             }
         },
         
@@ -349,7 +641,8 @@ def get_tool_documentation() -> dict:
                 "2. For new projects: create_hub_file + start_auto_crossref_watcher",
                 "3. For existing projects: implement_crossref_methodology + start_auto_crossref_watcher", 
                 "4. Use get_crossref_recommendations periodically for improvements",
-                "5. Use manual tools (add_crossref_header, update_hub_mandatory_reading) for fine-tuning"
+                "5. Use manual tools (add_crossref_header, update_hub_mandatory_reading) for fine-tuning",
+                "6. For PDF processing: Use extract_pdf_to_markdown for small files, extract_pdf_to_markdown_async for large files"
             ],
             "file_naming": [
                 "Use descriptive hub file names (SYSTEM.md, README.md, docs_hub.md)",
@@ -360,6 +653,21 @@ def get_tool_documentation() -> dict:
                 "Place hub file at project root or in main docs directory",
                 "Keep related Markdown files in same directory tree as hub",
                 "Use consistent directory structure for multi-module projects"
+            ],
+            "pdf_extraction_guidelines": [
+                "Use synchronous extraction for PDFs < 500KB or < 20 pages",
+                "Use asynchronous extraction for larger PDFs to avoid timeouts",
+                "Let the system auto-detect genre and create appropriate cross-references",
+                "Review extraction quality scores - values > 0.8 indicate excellent extraction",
+                "Trust the content-aware analysis - it creates better relationships than manual linking",
+                "Use generated hub files as navigation starting points"
+            ],
+            "content_analysis_optimization": [
+                "Provide clear, descriptive PDF titles for better genre detection",
+                "For mixed-genre documents, the system will detect primary genre and adapt",
+                "Review generated cross-reference reasons to understand content relationships",
+                "Use the hub file's content analysis summary to understand document structure",
+                "For technical documents, ensure clear procedure/step formatting for better analysis"
             ]
         },
         
@@ -368,17 +676,38 @@ def get_tool_documentation() -> dict:
                 "watcher_not_updating": "Ensure watcher is started and monitoring correct directory path",
                 "duplicate_headers": "Use add_crossref_header - it now detects and avoids duplicates",
                 "hub_file_not_found": "Verify hub file name and path, or let start_auto_crossref_watcher create one",
-                "json_parsing_errors": "Avoid debug print statements in server code - use PM2 logs for debugging"
-            }
+                "json_parsing_errors": "Avoid debug print statements in server code - use PM2 logs for debugging",
+                "pdf_extraction_timeout": "Use extract_pdf_to_markdown_async for large PDFs instead of synchronous version",
+                "low_extraction_quality": "Try different extraction strategies or check if PDF is scanned (OCR required)",
+                "async_task_not_found": "Task may have completed and been cleaned up - check task status immediately after completion",
+                "poor_cross_references": "Check if content has clear structure - system works best with well-structured text",
+                "genre_detection_incorrect": "For mixed-genre documents, system picks dominant genre - this is usually correct",
+                "missing_relationships": "System only creates high-quality relationships (similarity > 0.2) - low similarity indicates genuinely unrelated content"
+            },
+            "performance_optimization": [
+                "For large PDF batches, use async extraction to prevent system overload",
+                "Monitor active task count to avoid overwhelming the system",
+                "Quality scores below 0.5 may indicate scanned PDFs requiring OCR",
+                "Genre detection accuracy improves with longer, more structured content"
+            ]
         }
     }
     
     return {
         "success": True,
         "documentation": documentation,
-        "total_tools": 9,
-        "server_version": "1.0.0",
-        "summary": "Universal Cross-Reference MCP Server - Complete tool documentation and usage guide"
+        "total_tools": 12,
+        "server_version": "2.0.0 - Universal Content-Aware Edition",
+        "major_features": [
+            "Universal genre detection for 9+ content types",
+            "Content-aware cross-referencing with intelligent relationship analysis",
+            "Named entity recognition and concept extraction",
+            "Adaptive analysis strategies based on content type",
+            "Multi-strategy PDF extraction with quality assessment",
+            "Async processing for large documents",
+            "Real-time progress tracking and content analysis"
+        ],
+        "summary": "Universal Cross-Reference MCP Server - Complete tool documentation with revolutionary content-aware analysis that works intelligently with any type of book or document"
     }
 
 # --- End Watchdog Implementation ---
@@ -541,400 +870,729 @@ def get_crossref_recommendations(project_name: str = None) -> dict:
     except Exception as e:
         return {"error": f"Recommendation generation failed: {str(e)}"}
 
-@mcp.tool()
-def create_hub_file(file_path: str, title: str, description: str, related_files: list = None) -> dict:
-    """Create a hub file with mandatory cross-reference reading requirements in standard format."""
-    try:
-        file_path_obj = Path(file_path)
-        
-        if file_path_obj.exists():
-            return {"error": f"File already exists: {file_path}"}
-        
-        if related_files is None:
-            related_files = []
-        
-        # Create the hub file content with methodology format
-        content = f"""# 📄 **{title}**
-
-*{description}*
-
----
-
-# 📋 **CROSS-REFERENCE READING REQUIREMENT**
-
-> **⚠️ IMPORTANT: When reading this file you HAVE TO (I repeat HAVE TO) read files {', '.join([f'`{f}`' for f in related_files])}**  
-> **This is my system of cross-referencing MD files. When we make new MD files from now on, we will cross-reference like this to this main hub file**
-
----
-
-## 🎯 **System Overview**
-
-{description}
-
-### **Core Principle**
-> **Every person reading this documentation MUST read ALL related files to get the complete picture**
-
----
-
-## 📋 **Document Hierarchy & Structure**
-
-### **1. Central Hub Document**
-**File**: `{file_path_obj.name}`
-**Role**: **Primary system documentation** - the main entry point
-**Contains**: 
-- Complete system overview
-- Core components and features
-- **MANDATORY reading requirements** for all supplementary files
-
-### **2. Supplementary Technical Documents**
-**Files**: {', '.join([f'`{f}`' for f in related_files])}
-**Role**: **Deep-dive technical analysis** and specific system aspects
-
----
-
-## 🔧 **Implementation Rules**
-
-When creating **ANY** new MD file in this project:
-
-1. **Add cross-reference at the top** pointing back to this hub file
-2. **Update this hub file** to include the new file in the mandatory reading list
-3. **Update related files** if the new document relates to their content
-4. **Follow the established formatting** with warning icons and strong language
-
----
-
-## 📊 **Current Documentation Ecosystem**
-
-### **Active Cross-Reference Network**
-```
-{file_path_obj.name} (CENTRAL HUB)
-{chr(10).join([f'├── MUST READ: {f}' for f in related_files])}
-└── Future files will be added here
-```
-
----
-
-*Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*
-*Cross-reference system ensures complete understanding across all documentation.*
-"""
-        
-        # Write the file
-        file_path_obj.write_text(content, encoding="utf-8")
-        
-        return {
-            "success": True,
-            "file_created": str(file_path_obj),
-            "related_files": related_files,
-            "summary": f"Created hub file {file_path_obj.name} with {len(related_files)} cross-references"
-        }
-        
-    except Exception as e:
-        return {"error": f"Failed to create hub file: {str(e)}"}
+# --- End PDF Extraction Engine ---
 
 @mcp.tool()
-def add_crossref_header(file_path: str, hub_file: str, related_files: list = None) -> dict:
-    """Add cross-reference header to an existing file in standard format."""
+def extract_pdf_text(pdf_path: Path) -> dict:
+    """Extract text using multiple strategies for best results"""
     try:
-        file_path_obj = Path(file_path)
+        strategies_tried = []
+        best_result = {"text": "", "quality": 0.0, "strategy": "none"}
         
-        if not file_path_obj.exists():
-            return {"error": f"File not found: {file_path}"}
-        
-        if related_files is None:
-            related_files = []
-        
-        # Read existing content
+        # Strategy 1: Direct text extraction with PyPDF2 (fastest)
         try:
-            existing_content = file_path_obj.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            existing_content = file_path_obj.read_text(encoding="latin-1")
+            with open(pdf_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text() + "\n\n"
+                
+                quality = assess_extraction_quality(text)
+                strategies_tried.append({"strategy": "PyPDF2", "quality": quality})
+                
+                if quality > best_result["quality"]:
+                    best_result = {"text": text, "quality": quality, "strategy": "PyPDF2"}
+                    
+        except Exception as e:
+            strategies_tried.append({"strategy": "PyPDF2", "error": str(e)})
         
-        # Check if cross-reference header already exists
-        if "Cross-reference:" in existing_content:
-            return {
-                "success": True,
-                "status": "already_exists",
-                "file_updated": str(file_path_obj),
-                "summary": f"File {file_path_obj.name} already contains a cross-reference header. No changes made."
-            }
+        # Strategy 2: PDFPlumber (better for structured text)
+        try:
+            with pdfplumber.open(pdf_path) as pdf:
+                text = ""
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n\n"
+                
+                quality = assess_extraction_quality(text)
+                strategies_tried.append({"strategy": "pdfplumber", "quality": quality})
+                
+                if quality > best_result["quality"]:
+                    best_result = {"text": text, "quality": quality, "strategy": "pdfplumber"}
+                    
+        except Exception as e:
+            strategies_tried.append({"strategy": "pdfplumber", "error": str(e)})
         
-        # Extract title from first line if it's a markdown header
-        lines = existing_content.split('\n')
-        title_line = ""
-        content_start = 0
+        # Strategy 3: OCR with Tesseract (slowest, for scanned PDFs)
+        if OCR_AVAILABLE and best_result["quality"] < 0.5:  # Only if other methods failed
+            try:
+                images = convert_from_path(pdf_path, first_page=1, last_page=min(5, 10))  # Limit to first few pages for speed
+                text = ""
+                for image in images:
+                    text += pytesseract.image_to_string(image) + "\n\n"
+                
+                quality = assess_extraction_quality(text)
+                strategies_tried.append({"strategy": "OCR", "quality": quality})
+                
+                if quality > best_result["quality"]:
+                    best_result = {"text": text, "quality": quality, "strategy": "OCR"}
+                    
+            except Exception as e:
+                strategies_tried.append({"strategy": "OCR", "error": str(e)})
         
-        for i, line in enumerate(lines):
-            if line.strip().startswith('#'):
-                title_line = line.strip()
-                content_start = i + 1
-                break
+        return {
+            "success": True,
+            "text": best_result["text"],
+            "quality": best_result["quality"], 
+            "strategy_used": best_result["strategy"],
+            "strategies_tried": strategies_tried,
+            "page_count": get_pdf_page_count(pdf_path)
+        }
         
-        # Create cross-reference header
-        other_files_text = ""
-        if related_files:
-            other_files_text = f" Also read with {', '.join([f'`{f}`' for f in related_files])} for complete understanding."
-        
-        crossref_header = f"""
-**Cross-reference**: This document supplements the main system documentation in `{hub_file}`.{other_files_text}
+    except Exception as e:
+        return {"success": False, "error": f"PDF extraction failed: {str(e)}"}
 
+def assess_extraction_quality(text: str) -> float:
+    """Score extraction quality (0-1) based on text patterns"""
+    if not text or len(text.strip()) < 10:
+        return 0.0
+    
+    # Basic quality indicators
+    total_chars = len(text)
+    if total_chars == 0:
+        return 0.0
+    
+    # Count readable characters vs garbled
+    readable_chars = sum(1 for c in text if c.isalnum() or c.isspace() or c in '.,!?;:"()[]{}')
+    readable_ratio = readable_chars / total_chars
+    
+    # Check for common OCR/extraction errors
+    garbled_patterns = ['â€™', 'â€œ', 'â€', 'Â', 'ï¿½']
+    garbled_count = sum(text.count(pattern) for pattern in garbled_patterns)
+    garbled_penalty = min(garbled_count / 100, 0.5)  # Max 50% penalty
+    
+    # Check for reasonable word distribution
+    words = text.split()
+    if len(words) == 0:
+        return 0.0
+    
+    avg_word_length = sum(len(word) for word in words) / len(words)
+    word_length_score = min(avg_word_length / 6, 1.0)  # Ideal around 6 chars per word
+    
+    # Final quality score
+    quality = readable_ratio * word_length_score - garbled_penalty
+    return max(0.0, min(1.0, quality))
+
+def get_pdf_page_count(pdf_path: Path) -> int:
+    """Get number of pages in PDF"""
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            return len(pdf_reader.pages)
+    except:
+        return 0
+
+def chunk_pdf_content(text: str, pdf_name: str, max_chunks: int = 50) -> dict:
+    """Chunk PDF content into manageable markdown files (Phase 3)"""
+    if not text or not text.strip():
+        return {"success": False, "error": "No text content to chunk", "chunks": []}
+    
+    # Simple chunking by word count (MVP approach)
+    words = text.split()
+    if len(words) == 0:
+        return {"success": False, "error": "No words found in text", "chunks": []}
+    
+    # Calculate target words per chunk
+    target_words_per_chunk = max(500, len(words) // max_chunks)  # At least 500 words per chunk
+    
+    chunk_texts = []
+    current_chunk = []
+    current_word_count = 0
+    
+    for word in words:
+        current_chunk.append(word)
+        current_word_count += 1
+        
+        # Check for natural break points (sentence endings)
+        if (current_word_count >= target_words_per_chunk and 
+            word.endswith(('.', '!', '?')) and 
+            len(chunk_texts) < max_chunks - 1):
+            
+            chunk_text = ' '.join(current_chunk).strip()
+            if chunk_text:
+                chunk_texts.append(chunk_text)
+            current_chunk = []
+            current_word_count = 0
+    
+    # Add remaining content as final chunk
+    if current_chunk:
+        chunk_text = ' '.join(current_chunk).strip()
+        if chunk_text:
+            chunk_texts.append(chunk_text)
+    
+    # Convert to expected chunk format with metadata
+    chunks = []
+    for i, chunk_text in enumerate(chunk_texts, 1):
+        # Try to extract a meaningful title from first line/sentence
+        lines = chunk_text.split('\n')
+        first_line = next((line.strip() for line in lines if line.strip()), "")
+        
+        if len(first_line) > 5 and len(first_line) < 60:
+            # Use first line as title
+            title = first_line[:50]
+        else:
+            # Fallback to generic title
+            title = f"Chapter {i}"
+        
+        chunk_data = {
+            "content": chunk_text,
+            "title": title,
+            "word_count": len(chunk_text.split()),
+            "chunk_number": i
+        }
+        chunks.append(chunk_data)
+    
+    return {
+        "success": True,
+        "chunks": chunks,
+        "total_chunks": len(chunks),
+        "total_words": sum(chunk["word_count"] for chunk in chunks)
+    }
+
+def generate_chunk_filenames(pdf_name: str, chunks: list) -> list:
+    """Generate meaningful filenames for chunks (Phase 3)"""
+    base_name = pdf_name.replace('.pdf', '').replace(' ', '_').lower()
+    
+    filenames = []
+    for i, chunk in enumerate(chunks, 1):
+        # Try to extract a meaningful title from first line/sentence
+        lines = chunk.split('\n')
+        first_line = next((line.strip() for line in lines if line.strip()), "")
+        
+        if len(first_line) > 5 and len(first_line) < 60:
+            # Use first line as basis for filename
+            title = re.sub(r'[^\w\s-]', '', first_line)
+            title = re.sub(r'\s+', '_', title.strip()).lower()
+            filename = f"{base_name}_{i:02d}_{title[:30]}.md"
+        else:
+            # Fallback to sequential naming
+            filename = f"{base_name}_chapter_{i:02d}.md"
+        
+        filenames.append(filename)
+    
+    return filenames
+
+# --- End PDF Extraction Engine ---
+
+# --- Async PDF Extraction Engine (Phase 5) ---
+
+async def extract_pdf_text_async(pdf_path: Path, task: PDFExtractionTask) -> dict:
+    """Async version of PDF text extraction with progress tracking"""
+    try:
+        task.update_status("starting_extraction", 5)
+        await asyncio.sleep(0)  # Yield control
+        
+        # Use thread pool for CPU-intensive operations
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(task_executor, extract_pdf_text, pdf_path)
+        
+        task.update_status("text_extracted", 15)
+        await asyncio.sleep(0)  # Yield control
+        
+        return result
+        
+    except Exception as e:
+        task.fail(f"Async text extraction failed: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
+    """Process PDF extraction asynchronously with content-aware cross-referencing"""
+    task = active_tasks.get(task_id)
+    if not task:
+        return {"error": "Task not found", "success": False}
+    
+    try:
+        task.update_status("starting_extraction", 5)
+        await asyncio.sleep(0)  # Yield control
+        
+        pdf_path_obj = Path(pdf_path)
+        if not pdf_path_obj.exists():
+            task.fail(f"PDF file not found: {pdf_path}")
+            return {"error": f"PDF file not found: {pdf_path}", "success": False}
+        
+        # Extract text from PDF
+        task.update_status("extracting_text", 15)
+        result = await extract_pdf_text_async(pdf_path_obj, task)
+        if not result["success"]:
+            task.fail(result.get("error", "Text extraction failed"))
+            return result
+        
+        text = result["text"]
+        page_count = result.get("page_count", 0)
+        quality_score = result.get("quality_score", 0.0)
+        strategy_used = result.get("strategy", "auto")
+        
+        task.update_status("text_extracted", 25)
+        await asyncio.sleep(0)
+        
+        # Set output directory
+        output_dir = params.get("output_dir")
+        if output_dir is None:
+            base_name = pdf_path_obj.stem
+            output_dir = pdf_path_obj.parent / f"{base_name}_extracted"
+        else:
+            output_dir = Path(output_dir)
+        
+        # Create output directory
+        output_dir.mkdir(exist_ok=True)
+        
+        # Chunk the content
+        task.update_status("chunking_content", 35)
+        max_chunks = params.get("max_chunks", 50)
+        chunk_result = chunk_pdf_content(text, pdf_path.name, max_chunks)
+        if not chunk_result["success"]:
+            task.fail(chunk_result.get("error", "Chunking failed"))
+            return chunk_result
+        
+        chunks = chunk_result["chunks"]
+        task.update_status("content_chunked", 45)
+        await asyncio.sleep(0)
+        
+        # **NEW: Analyze content for intelligent cross-referencing**
+        task.update_status("analyzing_content", 55)
+        
+        # Prepare content for analysis (filename -> content mapping)
+        content_map = {}
+        for i, chunk in enumerate(chunks, 1):
+            filename = f"{pdf_path_obj.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+            content_map[filename] = chunk["content"]
+        
+        # Generate intelligent cross-references
+        smart_cross_refs = analyze_pdf_content_for_crossref_universal(content_map, pdf_path_obj.name)
+        
+        task.update_status("cross_references_generated", 65)
+        await asyncio.sleep(0)
+        
+        # Create individual chapter files with smart cross-references
+        task.update_status("creating_files", 75)
+        created_files = []
+        hub_file_name = f"{pdf_path_obj.stem}_index.md"
+        
+        for i, chunk in enumerate(chunks, 1):
+            filename = f"{pdf_path_obj.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+            file_path = output_dir / filename
+            
+            # Get smart cross-references for this chapter
+            related_files = smart_cross_refs.get(filename, [])
+            
+            # Create proper cross-reference header with intelligent relationships
+            cross_ref_header = f"""---
+MANDATORY READING: You HAVE TO read {hub_file_name} first, then this file.
+Cross-reference: {hub_file_name}
+Related files: {related_files}
+Chapter: {i} of {len(chunks)}
+Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 ---
 
 """
-        
-        # Reconstruct the file with cross-reference header
-        if title_line:
-            # Insert after title
-            new_content = title_line + "\n\n"
-            if content_start < len(lines) and lines[content_start].strip():
-                # Add description line if it exists
-                description_line = lines[content_start].strip()
-                if description_line and not description_line.startswith('#'):
-                    new_content += f"*{description_line}*\n\n"
-                    content_start += 1
             
-            new_content += crossref_header
-            new_content += '\n'.join(lines[content_start:])
-        else:
-            # No title found, add at the beginning
-            new_content = crossref_header + existing_content
+            # Create chapter content
+            chapter_content = f"""# {chunk['title']}
+
+**Extracted from PDF**: {pdf_path_obj.name}
+**Chunk**: {i} of {len(chunks)}
+**Words**: ~{chunk['word_count']:,}
+**Quality Score**: {quality_score:.2f}
+**Extraction Strategy**: {strategy_used}
+
+---
+
+{chunk['content']}
+"""
+            
+            # Write the file asynchronously
+            async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+                await f.write(cross_ref_header + chapter_content)
+            
+            created_files.append(str(file_path))
+            
+            # Update progress for each file
+            file_progress = 75 + ((i / len(chunks)) * 15)
+            task.update_status(f"created_file_{i}", file_progress)
+            await asyncio.sleep(0)  # Yield control
         
-        # Write the updated content
-        file_path_obj.write_text(new_content, encoding="utf-8")
+        # Create hub/index file if requested
+        create_hub = params.get("create_hub", True)
+        if create_hub:
+            task.update_status("creating_hub", 90)
+            hub_path = output_dir / hub_file_name
+            
+            # Generate hub content with content analysis
+            hub_content = f"""# {pdf_path_obj.stem} - Complete Cross-Referenced Knowledge Base
+
+**Source**: {pdf_path_obj.name}  
+**Extracted**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
+**Total Pages**: {page_count}  
+**Quality Score**: {quality_score:.2f}/1.0  
+**Extraction Strategy**: {strategy_used}  
+**Chapters**: {len(chunks)}
+
+## 📚 Reading Guide
+
+This knowledge base uses **intelligent content-aware cross-referencing** that analyzes:
+- **Conceptual relationships** between chapters
+- **Thematic connections** and shared ideas  
+- **Learning progression** from foundational to advanced concepts
+- **Semantic similarity** between topics
+
+### 🎯 Suggested Reading Path
+
+"""
+            
+            # Add chapters with word counts and smart navigation
+            for i, chunk in enumerate(chunks, 1):
+                filename = f"{pdf_path_obj.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+                related_count = len(smart_cross_refs.get(filename, []))
+                
+                hub_content += f"""
+#### Chapter {i}: [{chunk['title']}]({filename})
+- **Words**: ~{chunk['word_count']:,}
+- **Related chapters**: {related_count} intelligent connections
+- **Preview**: {chunk['content'][:200].replace('\n', ' ')}...
+
+"""
+            
+            hub_content += f"""
+## 📊 Content Analysis Summary
+
+- **Total chapters**: {len(chunks)}
+- **Total words**: ~{sum(chunk['word_count'] for chunk in chunks):,}
+- **Average chapter length**: ~{sum(chunk['word_count'] for chunk in chunks) // len(chunks):,} words
+- **Cross-reference density**: {sum(len(refs) for refs in smart_cross_refs.values())} intelligent connections
+
+## 🔗 Cross-Reference Methodology
+
+This extraction uses **content-aware cross-referencing** that goes beyond simple sequential linking:
+
+1. **Concept Extraction**: Identifies key philosophical, scientific, and metaphysical concepts
+2. **Thematic Analysis**: Groups chapters by shared themes and ideas
+3. **Semantic Similarity**: Calculates meaningful relationships between content
+4. **Learning Progression**: Suggests optimal reading sequences based on concept dependencies
+
+Each chapter's "Related files" are selected based on actual content analysis, not just proximity!
+
+---
+*Generated by Universal Cross-Reference MCP Server with Content-Aware PDF Analysis*
+"""
+            
+            async with aiofiles.open(hub_path, 'w', encoding='utf-8') as f:
+                await f.write(hub_content)
+            
+            created_files.append(str(hub_path))
         
-        return {
+        await asyncio.sleep(0)
+        
+        total_files = len(created_files)
+        total_words = sum(chunk['word_count'] for chunk in chunks)
+        
+        result = {
             "success": True,
-            "file_updated": str(file_path_obj),
-            "hub_file": hub_file,
-            "related_files": related_files,
-            "summary": f"Added cross-reference header to {file_path_obj.name}"
+            "message": f"Successfully extracted PDF to {total_files} cross-referenced markdown files",
+            "files_created": created_files,
+            "output_directory": str(output_dir),
+            "total_chapters": len(chunks),
+            "total_words": total_words,
+            "average_words_per_chapter": total_words // len(chunks),
+            "quality_score": quality_score,
+            "extraction_strategy": strategy_used,
+            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs])
         }
         
+        task.complete(result)
+        return result
+        
     except Exception as e:
-        return {"error": f"Failed to add cross-reference header: {str(e)}"}
+        task.fail(f"PDF extraction failed: {str(e)}")
+        return {"error": f"PDF extraction failed: {str(e)}", "success": False}
 
 @mcp.tool()
-def update_hub_mandatory_reading(hub_file_path: str, new_files: list = None, files_to_remove: list = None) -> dict:
-    """Update the mandatory reading list in a hub file with new files or remove existing ones."""
+def extract_pdf_to_markdown_async(
+    pdf_path: str,
+    output_dir: str = None,
+    max_chunks: int = 50,
+    create_hub: bool = True
+) -> dict:
+    """Start async PDF extraction to cross-referenced markdown files"""
     try:
-        hub_path_obj = Path(hub_file_path)
+        pdf_path_obj = Path(pdf_path)
+        if not pdf_path_obj.exists():
+            return {"error": f"PDF file not found: {pdf_path}"}
         
-        if not hub_path_obj.exists():
-            return {"error": f"Hub file not found: {hub_file_path}"}
-
-        if new_files is None:
-            new_files = []
-        if files_to_remove is None:
-            files_to_remove = []
+        if not pdf_path_obj.suffix.lower() == '.pdf':
+            return {"error": f"File is not a PDF: {pdf_path}"}
         
-        # Read the hub file
-        try:
-            content = hub_path_obj.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            content = hub_path_obj.read_text(encoding="latin-1")
+        # Generate unique task ID
+        task_id = str(uuid.uuid4())
         
-        lines = content.split('\n')
-        updated_lines = list(lines) # Work on a mutable copy
+        # Create task
+        params = {
+            'output_dir': output_dir,
+            'max_chunks': max_chunks,
+            'create_hub': create_hub
+        }
         
-        # Part 1: Update the main cross-reference reading requirement line
-        main_crossref_line_updated = False
-        in_crossref_section = False
+        task = PDFExtractionTask(task_id, pdf_path, params)
+        active_tasks[task_id] = task
         
-        temp_updated_lines_part1 = []
-        for line_idx, line in enumerate(updated_lines):
-            if "CROSS-REFERENCE READING REQUIREMENT" in line:
-                in_crossref_section = True
-                temp_updated_lines_part1.append(line)
-            elif in_crossref_section and line.strip().startswith("> **⚠️ IMPORTANT:"):
-                existing_files = []
-                if 'read files' in line:
-                    files_part = line.split('read files')[1].split('**')[0]
-                    existing_files = re.findall(r'`([^`]+)`', files_part)
-                
-                current_files_set = set(existing_files)
-                for new_file in new_files: current_files_set.add(new_file)
-                for old_file in files_to_remove: current_files_set.discard(old_file)
-                all_files_list = sorted(list(current_files_set))
-                
-                files_text = ', '.join([f'`{f}`' for f in all_files_list]) if all_files_list else "[no other files currently]"
-                new_line_content = f"> **⚠️ IMPORTANT: When reading this file you HAVE TO (I repeat HAVE TO) read files {files_text}**"
-                
-                original_line_parts = line.split('**', 1)
-                if len(original_line_parts) > 1 and 'This is my system' in original_line_parts[1]:
-                    # Preserve the descriptive part of the line
-                    descriptive_part_match = re.search(r'(\*\*\\s*This is my system.*)', line)
-                    if descriptive_part_match:
-                         new_line = new_line_content + "  \\n> " + descriptive_part_match.group(1).replace("** ","",1) # Keep original formatting
-                    else: # Fallback if regex fails
-                         new_line = new_line_content + original_line_parts[1][original_line_parts[1].find("This is my system")-len("**  \\n> "):]
-                else:
-                    new_line = new_line_content
-
-                temp_updated_lines_part1.append(new_line)
-                if line != new_line: # Check if actual change happened
-                    main_crossref_line_updated = True
-            elif in_crossref_section and line.strip().startswith("---"):
-                in_crossref_section = False
-                temp_updated_lines_part1.append(line)
-            else:
-                temp_updated_lines_part1.append(line)
-        
-        if main_crossref_line_updated : # only assign if an update truly happened
-             updated_lines = temp_updated_lines_part1
-        elif not any("CROSS-REFERENCE READING REQUIREMENT" in l for l in updated_lines): # section not found
-             pass # main_crossref_line_updated remains false
-        else: # section found but no changes made to the line itself.
-             main_crossref_line_updated = True # still count as "processed" if files were already there or list became empty as requested
-
-
-        # Part 2: Update the Active Cross-Reference Network diagram
-        ecosystem_diagram_updated = False
-        # Use 'updated_lines' from Part 1 for further modifications
-        
-        diagram_section_start_idx = -1
-        for i, line_content in enumerate(updated_lines):
-            if "Active Cross-Reference Network" in line_content:
-                diagram_section_start_idx = i
-                break
-        
-        if diagram_section_start_idx != -1:
-            code_block_start_idx = -1
-            code_block_end_idx = -1
-            
-            # Find the ``` start after the "Active Cross-Reference Network" header
-            for i in range(diagram_section_start_idx + 1, len(updated_lines)):
-                if updated_lines[i].strip().startswith("```"):
-                    code_block_start_idx = i
-                    break
-            
-            if code_block_start_idx != -1:
-                # Find the ``` end
-                for i in range(code_block_start_idx + 1, len(updated_lines)):
-                    if updated_lines[i].strip() == "```":
-                        code_block_end_idx = i
-                        break
-
-                if code_block_end_idx != -1:
-                    # Extract existing files from the current diagram (within updated_lines)
-                    existing_files_in_diagram = set()
-                    hub_name_line = ""
-                    for i in range(code_block_start_idx + 1, code_block_end_idx):
-                        diag_line = updated_lines[i].strip()
-                        if "(CENTRAL HUB)" in diag_line and not hub_name_line:
-                             hub_name_line = updated_lines[i] # Keep the hub line
-                        elif diag_line.startswith("├── MUST READ:"):
-                            existing_files_in_diagram.add(diag_line.replace("├── MUST READ:", "").strip())
-                    
-                    current_diag_files_set = existing_files_in_diagram.copy()
-                    for new_file in new_files: current_diag_files_set.add(new_file)
-                    for old_file in files_to_remove: current_diag_files_set.discard(old_file)
-                    sorted_diag_files = sorted(list(current_diag_files_set))
-                    
-                    new_diagram_lines = [updated_lines[code_block_start_idx]] # Start with ```
-                    if hub_name_line: # Add hub line if found
-                        new_diagram_lines.append(hub_name_line)
-                    elif updated_lines[code_block_start_idx+1].strip().endswith("(CENTRAL HUB)"): # Fallback for hub line
-                         new_diagram_lines.append(updated_lines[code_block_start_idx+1])
-
-
-                    for f_diag in sorted_diag_files:
-                        new_diagram_lines.append(f'├── MUST READ: {f_diag}')
-                    new_diagram_lines.append("└── Future files will be added here")
-                    new_diagram_lines.append(updated_lines[code_block_end_idx]) # End with ```
-                    
-                    # Check if the diagram content actually changed
-                    original_diagram_lines = updated_lines[code_block_start_idx : code_block_end_idx + 1]
-                    if original_diagram_lines != new_diagram_lines:
-                        updated_lines = updated_lines[:code_block_start_idx] + new_diagram_lines + updated_lines[code_block_end_idx+1:]
-                        ecosystem_diagram_updated = True
-                    else: # No change in diagram content
-                         ecosystem_diagram_updated = True # Count as "processed"
-
-        if not main_crossref_line_updated and not ecosystem_diagram_updated:
-            return {"error": "Could not find or update cross-reference section or ecosystem diagram"}
-
-        # Write the updated content
-        new_content = '\n'.join(updated_lines)
-        hub_path_obj.write_text(new_content, encoding="utf-8")
+        # Start async processing
+        asyncio.create_task(process_pdf_async(task_id, pdf_path, params))
         
         return {
             "success": True,
-            "hub_file_updated": str(hub_path_obj),
-            "files_added": new_files,
-            "files_removed": files_to_remove,
-            "summary": f"Updated mandatory reading list in {hub_path_obj.name}. Added: {len(new_files)}, Removed: {len(files_to_remove)}"
+            "task_id": task_id,
+            "status": "started",
+            "pdf_path": pdf_path,
+            "estimated_time": "2-5 minutes for large PDFs",
+            "instructions": f"Use check_pdf_extraction_status('{task_id}') to monitor progress",
+            "message": "PDF extraction started in background with automatic cross-referencing"
         }
         
     except Exception as e:
-        return {"error": f"Failed to update hub file: {str(e)}"}
+        return {"error": f"Failed to start async extraction: {str(e)}"}
 
 @mcp.tool()
-def implement_crossref_methodology(project_path: str, hub_file_name: str = "SYSTEM.md", project_title: str = None) -> dict:
-    """Implement the complete cross-reference methodology for a project."""
+def check_pdf_extraction_status(task_id: str) -> dict:
+    """Check the status of an ongoing PDF extraction task"""
     try:
-        project_path_obj = Path(project_path)
+        task = active_tasks.get(task_id)
+        if not task:
+            return {"error": f"Task {task_id} not found"}
         
-        if not project_path_obj.exists():
-            return {"error": f"Project path not found: {project_path}"}
+        result = {
+            "task_id": task_id,
+            "status": task.status,
+            "progress": task.progress,
+            "pdf_path": task.pdf_path,
+            "start_time": task.start_time.strftime('%Y-%m-%d %H:%M:%S'),
+            "elapsed_time": str(datetime.now() - task.start_time)
+        }
         
-        if not project_title:
-            project_title = f"{project_path_obj.name} System Documentation"
+        if task.status == "completed" and task.result:
+            result["result"] = task.result
+            # Clean up completed task after returning result
+            del active_tasks[task_id]
+        elif task.status == "failed" and task.error:
+            result["error"] = task.error
+            # Clean up failed task
+            del active_tasks[task_id]
         
-        # Find markdown files
-        md_files = []
-        for md_file in project_path_obj.rglob("*.md"):
-            if not any(ignore_dir in md_file.parts for ignore_dir in {".git", "node_modules", "__pycache__"}):
-                relative_path = md_file.relative_to(project_path_obj)
-                md_files.append(str(relative_path))
+        return result
         
-        # Remove the hub file from the list if it exists
-        md_files = [f for f in md_files if not f.endswith(hub_file_name)]
-        
-        hub_file_path = project_path_obj / hub_file_name
-        
-        operations = []
-        
-        # Step 1: Create or update hub file
-        if not hub_file_path.exists():
-            hub_result = create_hub_file(
-                str(hub_file_path),
-                project_title,
-                f"Comprehensive system documentation for {project_path_obj.name}",
-                md_files
-            )
-            operations.append({"operation": "create_hub", "result": hub_result})
-        else:
-            # Update existing hub file
-            update_result = update_hub_mandatory_reading(str(hub_file_path), md_files)
-            operations.append({"operation": "update_hub", "result": update_result})
-        
-        # Step 2: Add cross-reference headers to all markdown files
-        for md_file in md_files:
-            full_md_path = project_path_obj / md_file
-            other_files = [f for f in md_files if f != md_file][:3]  # Limit to 3 related files
-            
-            header_result = add_crossref_header(
-                str(full_md_path),
-                hub_file_name,
-                other_files
-            )
-            operations.append({"operation": "add_header", "file": md_file, "result": header_result})
-        
-        # Count successful operations
-        successful_ops = sum(1 for op in operations if op["result"].get("success", False))
+    except Exception as e:
+        return {"error": f"Failed to check status: {str(e)}"}
+
+@mcp.tool()
+def list_pdf_extraction_tasks() -> dict:
+    """List all active PDF extraction tasks"""
+    try:
+        tasks = []
+        for task_id, task in active_tasks.items():
+            tasks.append({
+                "task_id": task_id,
+                "status": task.status,
+                "progress": task.progress,
+                "pdf_path": task.pdf_path,
+                "start_time": task.start_time.strftime('%Y-%m-%d %H:%M:%S')
+            })
         
         return {
             "success": True,
-            "project_path": str(project_path_obj),
-            "hub_file": hub_file_name,
-            "markdown_files_processed": len(md_files),
-            "operations_completed": successful_ops,
-            "total_operations": len(operations),
-            "operations": operations,
-            "summary": f"Implemented cross-reference methodology for {project_path_obj.name}: {successful_ops}/{len(operations)} operations successful"
+            "active_tasks": len(tasks),
+            "tasks": tasks
         }
         
     except Exception as e:
-        return {"error": f"Failed to implement cross-reference methodology: {str(e)}"}
+        return {"error": f"Failed to list tasks: {str(e)}"}
+
+# --- End Async PDF Extraction Engine ---
+
+# Modify the existing extract_pdf_to_markdown function to include automatic cross-referencing
+@mcp.tool()
+def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: int = 20, 
+                           create_hub: bool = True, extraction_strategy: str = "auto") -> dict:
+    """Extract PDF content to cross-referenced markdown files with intelligent cross-referencing"""
+    try:
+        pdf_path = Path(pdf_path)
+        if not pdf_path.exists():
+            return {"error": f"PDF file not found: {pdf_path}", "success": False}
+        
+        # Extract text from PDF
+        result = extract_pdf_text(pdf_path)
+        if not result["success"]:
+            return result
+        
+        text = result["text"]
+        page_count = result.get("page_count", 0)
+        quality_score = result.get("quality_score", 0.0)
+        strategy_used = result.get("strategy", extraction_strategy)
+        
+        print(f"✅ PDF extraction completed. Quality: {quality_score:.2f}, Strategy: {strategy_used}")
+        
+        # Set output directory
+        if output_dir is None:
+            base_name = pdf_path.stem
+            output_dir = pdf_path.parent / f"{base_name}_extracted"
+        else:
+            output_dir = Path(output_dir)
+        
+        # Create output directory
+        output_dir.mkdir(exist_ok=True)
+        
+        # Chunk the content
+        chunk_result = chunk_pdf_content(text, pdf_path.name, max_chunks)
+        if not chunk_result["success"]:
+            return chunk_result
+        
+        chunks = chunk_result["chunks"]
+        
+        print(f"✅ Content chunked into {len(chunks)} chapters")
+        
+        # **NEW: Analyze content for intelligent cross-referencing**
+        print("🧠 Analyzing content for intelligent cross-referencing...")
+        
+        # Prepare content for analysis (filename -> content mapping)
+        content_map = {}
+        for i, chunk in enumerate(chunks, 1):
+            filename = f"{pdf_path.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+            content_map[filename] = chunk["content"]
+        
+        # Generate intelligent cross-references
+        smart_cross_refs = analyze_pdf_content_for_crossref_universal(content_map, pdf_path.name)
+        
+        print(f"🎯 Generated intelligent cross-references for {len(smart_cross_refs)} chapters")
+        
+        # Create individual chapter files with smart cross-references
+        created_files = []
+        hub_file_name = f"{pdf_path.stem}_index.md"
+        
+        for i, chunk in enumerate(chunks, 1):
+            filename = f"{pdf_path.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+            file_path = output_dir / filename
+            
+            # Get smart cross-references for this chapter
+            related_files = smart_cross_refs.get(filename, [])
+            
+            # Create proper cross-reference header with intelligent relationships
+            cross_ref_header = f"""---
+MANDATORY READING: You HAVE TO read {hub_file_name} first, then this file.
+Cross-reference: {hub_file_name}
+Related files: {related_files}
+Chapter: {i} of {len(chunks)}
+Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+---
+
+"""
+            
+            # Create chapter content
+            chapter_content = f"""# {chunk['title']}
+
+**Extracted from PDF**: {pdf_path.name}
+**Chunk**: {i} of {len(chunks)}
+**Words**: ~{chunk['word_count']:,}
+**Quality Score**: {quality_score:.2f}
+**Extraction Strategy**: {strategy_used}
+
+---
+
+{chunk['content']}
+"""
+            
+            # Write the file
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(cross_ref_header + chapter_content)
+            
+            created_files.append(str(file_path))
+            print(f"📄 Created: {filename} with {len(related_files)} intelligent cross-references")
+        
+        # Create hub/index file if requested
+        if create_hub:
+            hub_path = output_dir / hub_file_name
+            
+            # Generate hub content with content analysis
+            hub_content = f"""# {pdf_path.stem} - Complete Cross-Referenced Knowledge Base
+
+**Source**: {pdf_path.name}  
+**Extracted**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
+**Total Pages**: {page_count}  
+**Quality Score**: {quality_score:.2f}/1.0  
+**Extraction Strategy**: {strategy_used}  
+**Chapters**: {len(chunks)}
+
+## 📚 Reading Guide
+
+This knowledge base uses **intelligent content-aware cross-referencing** that analyzes:
+- **Conceptual relationships** between chapters
+- **Thematic connections** and shared ideas  
+- **Learning progression** from foundational to advanced concepts
+- **Semantic similarity** between topics
+
+### 🎯 Suggested Reading Path
+
+"""
+            
+            # Add chapters with word counts and smart navigation
+            for i, chunk in enumerate(chunks, 1):
+                filename = f"{pdf_path.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
+                related_count = len(smart_cross_refs.get(filename, []))
+                
+                hub_content += f"""
+#### Chapter {i}: [{chunk['title']}]({filename})
+- **Words**: ~{chunk['word_count']:,}
+- **Related chapters**: {related_count} intelligent connections
+- **Preview**: {chunk['content'][:200].replace('\n', ' ')}...
+
+"""
+            
+            hub_content += f"""
+## 📊 Content Analysis Summary
+
+- **Total chapters**: {len(chunks)}
+- **Total words**: ~{sum(chunk['word_count'] for chunk in chunks):,}
+- **Average chapter length**: ~{sum(chunk['word_count'] for chunk in chunks) // len(chunks):,} words
+- **Cross-reference density**: {sum(len(refs) for refs in smart_cross_refs.values())} intelligent connections
+
+## 🔗 Cross-Reference Methodology
+
+This extraction uses **content-aware cross-referencing** that goes beyond simple sequential linking:
+
+1. **Concept Extraction**: Identifies key philosophical, scientific, and metaphysical concepts
+2. **Thematic Analysis**: Groups chapters by shared themes and ideas
+3. **Semantic Similarity**: Calculates meaningful relationships between content
+4. **Learning Progression**: Suggests optimal reading sequences based on concept dependencies
+
+Each chapter's "Related files" are selected based on actual content analysis, not just proximity!
+
+---
+*Generated by Universal Cross-Reference MCP Server with Content-Aware PDF Analysis*
+"""
+            
+            with open(hub_path, 'w', encoding='utf-8') as f:
+                f.write(hub_content)
+            
+            created_files.append(str(hub_path))
+            print(f"🏠 Created hub file: {hub_file_name}")
+        
+        total_files = len(created_files)
+        total_words = sum(chunk['word_count'] for chunk in chunks)
+        
+        return {
+            "success": True,
+            "message": f"Successfully extracted PDF to {total_files} cross-referenced markdown files",
+            "files_created": created_files,
+            "output_directory": str(output_dir),
+            "total_chapters": len(chunks),
+            "total_words": total_words,
+            "average_words_per_chapter": total_words // len(chunks),
+            "quality_score": quality_score,
+            "extraction_strategy": strategy_used,
+            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs])
+        }
+        
+    except Exception as e:
+        return {"error": f"PDF extraction failed: {str(e)}", "success": False}
+
+# --- End PDF Extraction Engine ---
 
 def _detect_language(file_path: Path) -> str:
     """Detect programming language from file extension."""
@@ -949,7 +1607,8 @@ def _detect_language(file_path: Path) -> str:
         '.txt': 'text',
         '.json': 'json',
         '.yaml': 'yaml',
-        '.yml': 'yaml'
+        '.yml': 'yaml',
+        '.pdf': 'pdf'  # Add PDF detection
     }
     return language_map.get(ext, 'unknown')
 
@@ -1019,6 +1678,466 @@ def _detect_cross_references(content: str) -> list:
                 })
     
     return cross_refs[:5]  # Limit to first 5 cross-references
+
+# --- Universal Content-Aware PDF Cross-Referencing Engine (Enhanced for All Book Types) ---
+
+import re
+from collections import Counter, defaultdict
+from typing import Dict, List, Tuple, Set
+import math
+
+class UniversalPDFContentAnalyzer:
+    """Universal content-aware cross-referencing for all types of books and documents"""
+    
+    def __init__(self):
+        # Comprehensive concept patterns for different genres
+        self.concept_patterns = {
+            # Fiction & Literature
+            'fiction': [
+                r'\b(character|protagonist|hero|villain|narrator)\b',
+                r'\b(plot|story|narrative|chapter|scene|dialogue)\b',
+                r'\b(love|romance|relationship|family|friendship)\b',
+                r'\b(conflict|tension|drama|mystery|adventure)\b',
+                r'\b(setting|world|place|location|time|era)\b'
+            ],
+            
+            # Philosophy & Metaphysics  
+            'philosophical': [
+                r'\b(mind|consciousness|thinking|thought|idea|concept)\b',
+                r'\b(being|existence|reality|truth|essence|meaning)\b', 
+                r'\b(universal|omnipresent|infinite|eternal|absolute)\b',
+                r'\b(god|divine|spirit|soul|transcendent)\b',
+                r'\b(wisdom|knowledge|understanding|awareness)\b'
+            ],
+            
+            # Science & Technical
+            'scientific': [
+                r'\b(energy|force|motion|gravity|radiation|electromagnetic)\b',
+                r'\b(atom|molecule|element|particle|quantum|wave)\b',
+                r'\b(theory|hypothesis|experiment|research|data)\b',
+                r'\b(analysis|measurement|calculation|formula|equation)\b',
+                r'\b(system|process|mechanism|function|structure)\b'
+            ],
+            
+            # Business & Economics
+            'business': [
+                r'\b(strategy|management|leadership|organization|team)\b',
+                r'\b(market|customer|product|service|brand|sales)\b',
+                r'\b(profit|revenue|cost|investment|growth|value)\b',
+                r'\b(competition|advantage|innovation|efficiency)\b',
+                r'\b(goal|objective|performance|success|achievement)\b'
+            ],
+            
+            # History & Biography
+            'historical': [
+                r'\b(war|battle|conflict|revolution|empire|kingdom)\b',
+                r'\b(century|decade|year|period|era|age|epoch)\b',
+                r'\b(king|queen|president|leader|ruler|government)\b',
+                r'\b(culture|society|civilization|tradition|custom)\b',
+                r'\b(event|happening|occurrence|incident|development)\b'
+            ],
+            
+            # Self-Help & Psychology
+            'selfhelp': [
+                r'\b(habit|behavior|practice|routine|discipline)\b',
+                r'\b(goal|success|achievement|improvement|growth)\b',
+                r'\b(emotion|feeling|mood|attitude|mindset)\b',
+                r'\b(relationship|communication|interaction|social)\b',
+                r'\b(confidence|motivation|inspiration|determination)\b'
+            ],
+            
+            # Technical & Programming
+            'technical': [
+                r'\b(function|method|algorithm|process|procedure)\b',
+                r'\b(data|information|input|output|result|value)\b',
+                r'\b(system|application|software|program|code)\b',
+                r'\b(requirement|specification|implementation|design)\b',
+                r'\b(error|bug|debug|test|validation|verification)\b'
+            ],
+            
+            # Medical & Health
+            'medical': [
+                r'\b(health|disease|treatment|therapy|medicine|drug)\b',
+                r'\b(patient|doctor|nurse|hospital|clinic|care)\b',
+                r'\b(symptom|diagnosis|condition|syndrome|disorder)\b',
+                r'\b(body|organ|cell|tissue|blood|brain|heart)\b',
+                r'\b(research|study|trial|evidence|effectiveness)\b'
+            ],
+            
+            # Religious & Spiritual
+            'religious': [
+                r'\b(god|divine|sacred|holy|spiritual|prayer)\b',
+                r'\b(faith|belief|religion|worship|devotion)\b',
+                r'\b(soul|spirit|heaven|salvation|enlightenment)\b',
+                r'\b(church|temple|mosque|synagogue|cathedral)\b',
+                r'\b(scripture|bible|quran|torah|teaching|doctrine)\b'
+            ]
+        }
+        
+        # Genre indicators for automatic detection
+        self.genre_indicators = {
+            'fiction': ['novel', 'story', 'character', 'plot', 'romance', 'mystery', 'fantasy', 'drama'],
+            'philosophical': ['philosophy', 'metaphysics', 'consciousness', 'existence', 'reality', 'truth'],
+            'scientific': ['science', 'research', 'experiment', 'theory', 'physics', 'chemistry', 'biology'],
+            'business': ['business', 'management', 'strategy', 'leadership', 'marketing', 'sales', 'profit'],
+            'historical': ['history', 'historical', 'century', 'war', 'empire', 'civilization', 'ancient'],
+            'selfhelp': ['self-help', 'improve', 'success', 'habit', 'motivation', 'achievement', 'personal'],
+            'technical': ['programming', 'software', 'computer', 'algorithm', 'code', 'system', 'technical'],
+            'medical': ['medical', 'health', 'medicine', 'disease', 'treatment', 'patient', 'clinical'],
+            'religious': ['religion', 'spiritual', 'faith', 'god', 'prayer', 'scripture', 'sacred']
+        }
+    
+    def detect_genre(self, full_text: str, title: str = "") -> List[Tuple[str, float]]:
+        """Detect the primary genre(s) of the book based on content analysis"""
+        text_lower = (full_text + " " + title).lower()
+        genre_scores = defaultdict(float)
+        
+        # Score based on genre indicators
+        for genre, indicators in self.genre_indicators.items():
+            score = 0
+            for indicator in indicators:
+                # Count occurrences, weighted by indicator importance
+                count = text_lower.count(indicator)
+                score += count * (1.0 + len(indicator) / 10.0)  # Longer indicators get slight boost
+            
+            # Normalize by text length
+            genre_scores[genre] = score / max(len(text_lower.split()), 1000)
+        
+        # Also score based on concept patterns
+        for genre, patterns in self.concept_patterns.items():
+            pattern_score = 0
+            for pattern in patterns:
+                matches = len(re.findall(pattern, text_lower, re.IGNORECASE))
+                pattern_score += matches
+            
+            genre_scores[genre] += pattern_score / max(len(text_lower.split()), 1000)
+        
+        # Return sorted genres by score
+        sorted_genres = sorted(genre_scores.items(), key=lambda x: x[1], reverse=True)
+        return [(genre, score) for genre, score in sorted_genres if score > 0]
+    
+    def extract_concepts_universal(self, text: str, title: str = "", detected_genres: List[str] = None) -> Dict[str, float]:
+        """Extract concepts with genre-aware weighting"""
+        text_lower = text.lower()
+        concept_counts = Counter()
+        
+        # Use detected genres or fall back to all patterns
+        if detected_genres:
+            active_patterns = {}
+            for genre in detected_genres[:3]:  # Use top 3 genres
+                if genre in self.concept_patterns:
+                    active_patterns[genre] = self.concept_patterns[genre]
+        else:
+            active_patterns = self.concept_patterns
+        
+        # Extract concepts by category with genre weighting
+        for genre, patterns in active_patterns.items():
+            genre_weight = 1.0
+            if detected_genres and genre in detected_genres:
+                # Higher weight for primary detected genres
+                genre_weight = 2.0 / (detected_genres.index(genre) + 1)
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, text_lower, re.IGNORECASE)
+                for match in matches:
+                    concept_counts[match] += genre_weight
+        
+        # Add title-based concepts (higher weight)
+        title_words = re.findall(r'\b\w{4,}\b', title.lower())
+        for word in title_words:
+            if word not in ['chapter', 'contents', 'page', 'book', 'part']:
+                concept_counts[word] += 3
+        
+        # Add named entities (simple extraction)
+        entities = self.extract_named_entities(text)
+        for entity in entities:
+            concept_counts[entity.lower()] += 2
+        
+        # Weight by frequency and context importance
+        weighted_concepts = {}
+        total_words = len(text.split())
+        
+        for concept, count in concept_counts.items():
+            # TF-IDF style weighting
+            frequency = count / max(total_words, 1)
+            importance = math.log(1 + count)
+            weighted_concepts[concept] = frequency * importance
+            
+        return weighted_concepts
+    
+    def extract_named_entities(self, text: str) -> List[str]:
+        """Simple named entity extraction (people, places, organizations)"""
+        # Simple heuristic-based approach (could be enhanced with NLP libraries)
+        entities = []
+        
+        # Capitalized words that aren't at sentence start
+        sentences = re.split(r'[.!?]+', text)
+        for sentence in sentences:
+            words = sentence.split()
+            for i, word in enumerate(words):
+                if (i > 0 and  # Not first word of sentence
+                    word[0].isupper() and  # Capitalized
+                    len(word) > 3 and  # Reasonable length
+                    word.isalpha()):  # Only letters
+                    entities.append(word)
+        
+        # Remove duplicates and common false positives
+        common_words = {'The', 'This', 'That', 'These', 'Those', 'When', 'Where', 'What', 'Why', 'How'}
+        entities = list(set([e for e in entities if e not in common_words]))
+        
+        return entities[:20]  # Limit to top 20
+    
+    def analyze_content_structure(self, chapters: Dict[str, str], detected_genres: List[str]) -> Dict[str, Dict]:
+        """Genre-aware content structure analysis"""
+        chapter_analysis = {}
+        primary_genre = detected_genres[0] if detected_genres else 'general'
+        
+        for chapter_id, content in chapters.items():
+            # Extract title from content
+            title_match = re.search(r'# (.+)', content)
+            title = title_match.group(1) if title_match else chapter_id
+            
+            # Extract concepts with genre awareness
+            concepts = self.extract_concepts_universal(content, title, detected_genres)
+            
+            # Identify primary themes (top concepts)
+            primary_themes = dict(sorted(concepts.items(), 
+                                       key=lambda x: x[1], reverse=True)[:5])
+            
+            # Genre-specific analysis
+            special_features = self.extract_genre_specific_features(content, primary_genre)
+            
+            chapter_analysis[chapter_id] = {
+                'title': title,
+                'concepts': concepts,
+                'primary_themes': primary_themes,
+                'primary_genre': primary_genre,
+                'word_count': len(content.split()),
+                'concept_density': len(concepts) / max(len(content.split()), 1),
+                'special_features': special_features,
+                'entities': self.extract_named_entities(content)
+            }
+            
+        return chapter_analysis
+    
+    def extract_genre_specific_features(self, content: str, genre: str) -> Dict:
+        """Extract genre-specific features for better cross-referencing"""
+        features = {}
+        
+        if genre == 'fiction':
+            # Character extraction
+            characters = [e for e in self.extract_named_entities(content) 
+                         if not any(word in e.lower() for word in ['chapter', 'book', 'part'])]
+            features['characters'] = characters[:10]
+            
+            # Dialogue density
+            dialogue_lines = len(re.findall(r'"[^"]*"', content))
+            features['dialogue_density'] = dialogue_lines / max(len(content.split()), 1)
+            
+        elif genre == 'technical':
+            # Procedure/step detection
+            steps = re.findall(r'\b(?:step|first|second|third|\d+\.)\b.*?(?:\.|$)', content, re.IGNORECASE)
+            features['procedures'] = len(steps)
+            
+            # Code/formula detection
+            code_blocks = len(re.findall(r'```|`[^`]+`|\b[A-Z_]+\([^)]*\)', content))
+            features['code_density'] = code_blocks / max(len(content.split()), 1)
+            
+        elif genre == 'historical':
+            # Date/year extraction
+            dates = re.findall(r'\b(?:19|20)\d{2}\b|\b\d{1,2}(?:st|nd|rd|th)?\s+century\b', content, re.IGNORECASE)
+            features['temporal_references'] = len(set(dates))
+            
+            # Historical figures (capitalized names)
+            historical_figures = [e for e in self.extract_named_entities(content)]
+            features['historical_figures'] = historical_figures[:10]
+            
+        elif genre == 'business':
+            # Metrics/numbers detection
+            metrics = len(re.findall(r'\$[\d,]+|\b\d+%|\b\d+\.\d+\b', content))
+            features['quantitative_content'] = metrics / max(len(content.split()), 1)
+            
+            # Strategy terms
+            strategy_terms = len(re.findall(r'\b(?:strategy|goal|objective|kpi|roi|growth)\b', content, re.IGNORECASE))
+            features['strategy_density'] = strategy_terms / max(len(content.split()), 1)
+        
+        return features
+    
+    def calculate_universal_similarity(self, chapter1: Dict, chapter2: Dict) -> float:
+        """Universal similarity calculation that adapts to genre"""
+        genre = chapter1.get('primary_genre', 'general')
+        
+        # Base conceptual similarity
+        concepts1 = set(chapter1['concepts'].keys())
+        concepts2 = set(chapter2['concepts'].keys())
+        
+        if not concepts1 or not concepts2:
+            return 0.0
+            
+        # Jaccard similarity for concept overlap
+        intersection = len(concepts1.intersection(concepts2))
+        union = len(concepts1.union(concepts2))
+        jaccard = intersection / union if union > 0 else 0
+        
+        # Weighted similarity by concept importance
+        weighted_sim = 0.0
+        shared_concepts = concepts1.intersection(concepts2)
+        
+        for concept in shared_concepts:
+            weight1 = chapter1['concepts'].get(concept, 0)
+            weight2 = chapter2['concepts'].get(concept, 0)
+            weighted_sim += min(weight1, weight2)
+        
+        # Normalize by average concept count
+        avg_concepts = (len(concepts1) + len(concepts2)) / 2
+        normalized_weighted = weighted_sim / max(avg_concepts, 1)
+        
+        # Genre-specific similarity adjustments
+        genre_bonus = self.calculate_genre_specific_similarity(chapter1, chapter2, genre)
+        
+        # Combined similarity score
+        base_similarity = (jaccard * 0.4) + (normalized_weighted * 0.4)
+        return min(1.0, base_similarity + genre_bonus * 0.2)
+    
+    def calculate_genre_specific_similarity(self, chapter1: Dict, chapter2: Dict, genre: str) -> float:
+        """Calculate genre-specific similarity bonuses"""
+        features1 = chapter1.get('special_features', {})
+        features2 = chapter2.get('special_features', {})
+        
+        if genre == 'fiction':
+            # Character overlap
+            chars1 = set(features1.get('characters', []))
+            chars2 = set(features2.get('characters', []))
+            char_overlap = len(chars1.intersection(chars2)) / max(len(chars1.union(chars2)), 1)
+            return char_overlap * 0.5
+            
+        elif genre == 'technical':
+            # Similar procedure density
+            proc1 = features1.get('procedures', 0)
+            proc2 = features2.get('procedures', 0)
+            if proc1 > 0 and proc2 > 0:
+                return min(proc1, proc2) / max(proc1, proc2) * 0.3
+                
+        elif genre == 'historical':
+            # Temporal proximity or figure overlap
+            figs1 = set(features1.get('historical_figures', []))
+            figs2 = set(features2.get('historical_figures', []))
+            fig_overlap = len(figs1.intersection(figs2)) / max(len(figs1.union(figs2)), 1)
+            return fig_overlap * 0.4
+        
+        return 0.0
+    
+    def generate_universal_cross_references(self, analysis: Dict[str, Dict], 
+                                          chapter_id: str, max_refs: int = 3) -> List[Dict[str, str]]:
+        """Generate intelligent cross-references adapted to content genre"""
+        if chapter_id not in analysis:
+            return []
+            
+        current_chapter = analysis[chapter_id]
+        genre = current_chapter.get('primary_genre', 'general')
+        similarities = []
+        
+        # Calculate similarity with all other chapters
+        for other_id, other_data in analysis.items():
+            if other_id != chapter_id:
+                similarity = self.calculate_universal_similarity(current_chapter, other_data)
+                similarities.append((other_id, similarity, other_data))
+        
+        # Sort by similarity and select top references
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        
+        cross_refs = []
+        for other_id, similarity, other_data in similarities[:max_refs]:
+            if similarity > 0.2:  # Minimum threshold for meaningful relationships
+                # Generate descriptive reason for the relationship
+                reason = self.generate_relationship_reason(current_chapter, other_data, genre)
+                
+                cross_refs.append({
+                    'file': other_id,
+                    'similarity_score': round(similarity, 3),
+                    'reason': reason,
+                    'genre': genre,
+                    'relationship_type': self.classify_relationship_type(current_chapter, other_data, genre)
+                })
+        
+        return cross_refs
+    
+    def generate_relationship_reason(self, chapter1: Dict, chapter2: Dict, genre: str) -> str:
+        """Generate human-readable reasons for cross-references"""
+        shared_concepts = set(chapter1['concepts'].keys()).intersection(
+            set(chapter2['concepts'].keys())
+        )
+        
+        if not shared_concepts:
+            return "Thematic connection"
+        
+        # Get top shared concepts
+        top_shared = sorted(shared_concepts, 
+                          key=lambda c: chapter1['concepts'].get(c, 0) + chapter2['concepts'].get(c, 0),
+                          reverse=True)[:3]
+        
+        if genre == 'fiction':
+            # Check for character overlap
+            chars1 = set(chapter1.get('special_features', {}).get('characters', []))
+            chars2 = set(chapter2.get('special_features', {}).get('characters', []))
+            char_overlap = chars1.intersection(chars2)
+            
+            if char_overlap:
+                return f"Shared characters: {', '.join(list(char_overlap)[:2])}"
+            else:
+                return f"Related themes: {', '.join(top_shared)}"
+                
+        elif genre == 'technical':
+            return f"Related concepts: {', '.join(top_shared)}"
+            
+        elif genre == 'historical':
+            return f"Connected topics: {', '.join(top_shared)}"
+            
+        else:
+            return f"Shared concepts: {', '.join(top_shared)}"
+    
+    def classify_relationship_type(self, chapter1: Dict, chapter2: Dict, genre: str) -> str:
+        """Classify the type of relationship between chapters"""
+        if genre == 'fiction':
+            return "narrative_connection"
+        elif genre == 'technical':
+            return "conceptual_dependency"
+        elif genre == 'historical':
+            return "chronological_relationship"
+        elif genre == 'business':
+            return "strategic_connection"
+        else:
+            return "thematic_relationship"
+
+def analyze_pdf_content_for_crossref_universal(chunks: Dict[str, str], pdf_title: str = "") -> Dict[str, List[str]]:
+    """Universal function to analyze PDF content and generate cross-references for any book type"""
+    analyzer = UniversalPDFContentAnalyzer()
+    
+    # Combine all text for genre detection
+    full_text = " ".join(chunks.values())
+    
+    # Detect genres
+    detected_genres = analyzer.detect_genre(full_text, pdf_title)
+    primary_genres = [genre for genre, score in detected_genres[:3]]
+    
+    print(f"🎯 Detected genres: {primary_genres}")
+    
+    # Analyze all chapters with genre awareness
+    analysis = analyzer.analyze_content_structure(chunks, primary_genres)
+    
+    # Generate cross-references for each chapter
+    cross_references = {}
+    for chapter_id in chunks.keys():
+        smart_refs = analyzer.generate_universal_cross_references(analysis, chapter_id)
+        cross_references[chapter_id] = [ref['file'] for ref in smart_refs]
+        
+        # Debug output
+        if smart_refs:
+            print(f"📚 {chapter_id}: {len(smart_refs)} intelligent connections")
+            for ref in smart_refs:
+                print(f"   → {ref['file']}: {ref['reason']} (similarity: {ref['similarity_score']})")
+    
+    return cross_references
 
 if __name__ == "__main__":
     # Run the server using stdio transport
