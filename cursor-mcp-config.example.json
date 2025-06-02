@@ -1,0 +1,9 @@
+{
+  "universal-crossref": {
+    "command": "python3 /path/to/universal-crossref-mcp/src/mcp_server/simple_server.py",
+    "enabled": true,
+    "metadata": {
+      "description": "Universal Cross-Reference Documentation System"
+    }
+  }
+} 
