@@ -1,0 +1,77 @@
+# Universal Cross-Reference MCP Server Configuration
+
+project:
+  name: "universal-crossref"
+  hub_file: "SYSTEM.md"
+  enforcement_level: "strict"  # strict, warning, suggestion
+  auto_update_hub: true
+  auto_create_hub: true
+
+scanning:
+  include_patterns:
+    - "**/*.{js,ts,jsx,tsx}"
+    - "**/*.{py,java,cpp,c,h,cs}"
+    - "**/*.{css,scss,less,sass}"
+    - "**/*.{json,yaml,yml,toml,env}"
+    - "**/*.{md,rst,txt}"
+    - "**/*.{html,xml}"
+    - "**/*.{sql,graphql}"
+  
+  exclude_patterns:
+    - "**/node_modules/**"
+    - "**/build/**"
+    - "**/dist/**"
+    - "**/.git/**"
+    - "**/coverage/**"
+    - "**/__pycache__/**"
+    - "**/*.min.js"
+    - "**/*.bundle.js"
+    - "**/venv/**"
+    - "**/.venv/**"
+  
+  size_limits:
+    max_file_size_mb: 10
+    max_files_per_directory: 10000
+  
+  scan_depth:
+    max_directory_depth: 20
+    emergency_stop_file_count: 100000
+  
+  batch_size: 100
+  max_concurrent_workers: 4
+
+cross_reference:
+  required_reading_format: "⚠️ IMPORTANT: When reading this file you HAVE TO read: {files}"
+  bidirectional_reference_format: "**Cross-reference**: This document supplements {hub_file}. Also read: {related_files}"
+  
+  relationship_types:
+    - "imports"
+    - "depends_on"
+    - "tested_by"
+    - "styles"
+    - "configures"
+    - "documents"
+    - "extends"
+    - "implements"
+
+database:
+  pool_size: 10
+  max_overflow: 20
+  query_timeout: 30
+  connection_timeout: 10
+
+performance:
+  memory_limit_mb: 1024
+  cpu_usage_limit: 50
+  auto_pause_on_high_load: true
+  cache_ttl: 3600
+  
+  emergency_stop_triggers:
+    memory_usage_mb: 2048
+    file_count: 200000
+    scan_time_minutes: 30
+
+logging:
+  level: "INFO"
+  format: "structured"
+  file_logging: false 
