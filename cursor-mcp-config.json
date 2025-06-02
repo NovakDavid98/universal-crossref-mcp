@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "universal-crossref": {
+      "command": "python",
+      "args": [
+        "-m", 
+        "src.mcp_server.server"
+      ],
+      "cwd": "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp",
+      "env": {
+        "DATABASE_URL": "postgresql+asyncpg://crossref_user:crossref123@localhost:5432/crossref_db",
+        "PYTHONPATH": "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp"
+      }
+    }
+  }
+} 
+

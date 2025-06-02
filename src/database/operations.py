@@ -253,26 +253,61 @@ class FileRepository(BaseRepository):
         file_types: Optional[List[str]] = None,
         limit: int = 100
     ) -> List[File]:
-        """Search files by name or path."""
+        """Search files by name, path, or content patterns."""
         conditions = [File.project_id == project_id]
         
-        # Add text search condition
+        # Simple text search in file paths and names
+        search_pattern = f"%{query}%"
         search_condition = or_(
-            File.name.ilike(f"%{query}%"),
-            File.relative_path.ilike(f"%{query}%")
+            File.relative_path.ilike(search_pattern),
+            File.name.ilike(search_pattern)
         )
         conditions.append(search_condition)
         
-        # Add file type filter
         if file_types:
             conditions.append(File.file_type.in_(file_types))
         
         result = await session.execute(
             select(File)
             .where(and_(*conditions))
-            .order_by(File.name)
             .limit(limit)
         )
+        return list(result.scalars().all())
+
+    async def get_text_files_by_project(
+        self,
+        session: AsyncSession,
+        project_id: int,
+        limit: Optional[int] = None
+    ) -> List[File]:
+        """Get all text-based files for a project (suitable for content analysis)."""
+        text_file_types = [
+            "code", "config", "docs", "markup", "style", "template", "test"
+        ]
+        
+        text_extensions = [
+            ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".cpp", ".c", ".h",
+            ".cs", ".php", ".rb", ".go", ".rs", ".swift", ".kt", ".scala",
+            ".html", ".htm", ".xml", ".css", ".scss", ".sass", ".less",
+            ".md", ".rst", ".txt", ".json", ".yaml", ".yml", ".toml",
+            ".ini", ".cfg", ".conf", ".env", ".sql", ".graphql", ".gql"
+        ]
+        
+        conditions = [
+            File.project_id == project_id,
+            File.status != FileStatus.DELETED,
+            or_(
+                File.file_type.in_(text_file_types),
+                File.extension.in_([ext[1:] for ext in text_extensions])  # Remove leading dot
+            )
+        ]
+        
+        query = select(File).where(and_(*conditions)).order_by(File.relative_path)
+        
+        if limit:
+            query = query.limit(limit)
+        
+        result = await session.execute(query)
         return list(result.scalars().all())
 
 

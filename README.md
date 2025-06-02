@@ -4,7 +4,7 @@ A powerful cross-reference documentation management system for Markdown files, i
 
 ## 🌟 Overview
 
-Universal Cross-Reference MCP Server automates the "NutriAI" cross-referencing methodology for documentation, creating bidirectional links between related files and ensuring readers have access to all necessary context.
+Universal Cross-Reference MCP Server automates the cross-referencing methodology for documentation, creating bidirectional links between related files and ensuring readers have access to all necessary context.
 
 The system:
 - Creates and maintains a central "hub" file that lists all related documentation
@@ -154,7 +154,7 @@ mcp_universal-crossref_start_auto_crossref_watcher(
 )
 ```
 
-## 📋 The "NutriAI" Cross-Reference Methodology
+## 📋 The Cross-Reference Methodology
 
 This system implements a specific documentation methodology with these key principles:
 

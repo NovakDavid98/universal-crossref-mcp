@@ -1,0 +1,16 @@
+{
+  "editor.fontSize": 14,
+  "workbench.colorTheme": "Dark+",
+  "mcpServers": {
+    "universal-crossref": {
+      "command": "python",
+      "args": [
+        "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp/run_server.py"
+      ],
+      "env": {
+        "DATABASE_URL": "postgresql+asyncpg://crossref_user:crossref123@localhost:5432/crossref_db",
+        "PYTHONPATH": "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp"
+      }
+    }
+  }
+} 

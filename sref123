@@ -1,0 +1,23 @@
+[0;1;32m●[0m postgresql.service - PostgreSQL database server
+     Loaded: loaded (]8;;file://fedora/usr/lib/systemd/system/postgresql.service/usr/lib/systemd/system/postgresql.service]8;;; [0;1;32menabled[0m; preset: [0;1;38:5:185mdisabled[0m)
+    Drop-In: /usr/lib/systemd/system/service.d
+             └─]8;;file://fedora/usr/lib/systemd/system/service.d/10-timeout-abort.conf10-timeout-abort.conf]8;;, ]8;;file://fedora/usr/lib/systemd/system/service.d/50-keep-warm.conf50-keep-warm.conf]8;;
+     Active: [0;1;32mactive (running)[0m since Thu 2025-05-29 12:21:19 CEST; 4 days ago
+ Invocation: 7341ecb4ec154ac9bb0be8ab8efe9dcd
+   Main PID: 1498 (postgres)
+      Tasks: 7[0;38;5;245m (limit: 38120)[0m
+     Memory: 25.4M (peak: 85.9M swap: 26.2M swap peak: 27.4M)
+        CPU: 31.305s
+     CGroup: /system.slice/postgresql.service
+             ├─[0;38;5;245m1498 /usr/bin/postgres -D /var/lib/pgsql/data[0m
+             ├─[0;38;5;245m1574 "postgres: logger "[0m
+             ├─[0;38;5;245m1575 "postgres: checkpointer "[0m
+             ├─[0;38;5;245m1576 "postgres: background writer "[0m
+             ├─[0;38;5;245m1671 "postgres: walwriter "[0m
+             ├─[0;38;5;245m1672 "postgres: autovacuum launcher "[0m
+             └─[0;38;5;245m1673 "postgres: logical replication launcher "[0m
+
+May 29 12:21:16 fedora systemd[1]: Starting postgresql.service - PostgreSQL database server...
+May 29 12:21:17 fedora postgres[1498]: 2025-05-29 12:21:17.824 CEST [1498] LOG:  redirecting log output to logging collector process
+May 29 12:21:17 fedora postgres[1498]: 2025-05-29 12:21:17.824 CEST [1498] HINT:  Future log output will appear in directory "log".
+May 29 12:21:19 fedora systemd[1]: Started postgresql.service - PostgreSQL database server.

@@ -25,6 +25,11 @@ logger = structlog.get_logger(__name__)
 
 async def create_database_if_not_exists(database_url: str) -> bool:
     """Create database if it doesn't exist."""
+    # Skip database creation for SQLite - it creates the file automatically
+    if "sqlite" in database_url.lower():
+        logger.info("Using SQLite database, skipping database creation")
+        return False
+    
     # Parse database URL to get connection info
     db_config = DatabaseConfig.parse_database_url(database_url)
     
@@ -43,13 +48,14 @@ async def create_database_if_not_exists(database_url: str) -> bool:
     try:
         async with engine.connect() as conn:
             # Check if database exists
+            from sqlalchemy import text
             result = await conn.execute(
-                f"SELECT 1 FROM pg_database WHERE datname = '{db_config['database']}'"
+                text(f"SELECT 1 FROM pg_database WHERE datname = '{db_config['database']}'")
             )
             
             if not result.fetchone():
                 logger.info("Creating database", database=db_config["database"])
-                await conn.execute(f"CREATE DATABASE {db_config['database']}")
+                await conn.execute(text(f"CREATE DATABASE {db_config['database']}"))
                 logger.info("Database created successfully")
                 return True
             else:

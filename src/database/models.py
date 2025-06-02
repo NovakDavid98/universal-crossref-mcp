@@ -178,7 +178,7 @@ class File(Base):
     required_reading: Mapped[Optional[List[str]]] = mapped_column(ARRAY(String))
     
     # Custom metadata (extensible)
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    file_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
     
     # Relationships
     project: Mapped["Project"] = relationship("Project", back_populates="files")
@@ -238,7 +238,7 @@ class FileRelationship(Base):
     last_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     
     # Additional metadata
-    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    relationship_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
     
     # Relationships
     source_file: Mapped["File"] = relationship(

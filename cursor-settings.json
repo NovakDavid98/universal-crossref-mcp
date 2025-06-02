@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "universal-crossref": {
+      "command": "python3",
+      "args": [
+        "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp/src/mcp_server/simple_server.py"
+      ],
+      "env": {
+        "PYTHONPATH": "/home/frontalneuralcortex/crossrefference/universal-crossref-mcp"
+      }
+    }
+  }
+} 

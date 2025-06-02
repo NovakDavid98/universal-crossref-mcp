@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
+from sqlalchemy import text
 
 from src.utils.config import get_settings
 
@@ -72,7 +73,7 @@ class DatabaseManager:
     def _get_pool_config(self, settings: Any) -> Dict[str, Any]:
         """Get connection pool configuration based on settings."""
         pool_config = {
-            "poolclass": QueuePool,
+            "poolclass": AsyncAdaptedQueuePool,
             "pool_size": settings.database_pool_size,
             "max_overflow": settings.database_max_overflow,
         }
@@ -115,7 +116,7 @@ class DatabaseManager:
         
         try:
             async with self.get_session() as session:
-                result = await session.execute("SELECT 1")
+                result = await session.execute(text("SELECT 1"))
                 return result.scalar() == 1
         except Exception as e:
             logger.error("Database health check failed", error=str(e))
@@ -164,6 +165,10 @@ async def wait_for_db(max_retries: int = 30, retry_delay: float = 1.0) -> bool:
     
     for attempt in range(max_retries):
         try:
+            # Initialize database manager if not already initialized
+            if not db_manager._is_initialized:
+                await db_manager.initialize()
+            
             if await db_manager.health_check():
                 logger.info("Database is available", attempt=attempt + 1)
                 return True

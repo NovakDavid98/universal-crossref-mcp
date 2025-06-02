@@ -75,7 +75,7 @@ class FileInfo:
             "name": self.name,
             "extension": self.extension[1:] if self.extension else None,
             "size_bytes": self.size,
-            "content_hash": self.content_hash,
+            "content_hash": self.content_hash or "",
             "encoding": self.encoding,
             "mime_type": self.mime_type,
             "file_type": self.file_type,
