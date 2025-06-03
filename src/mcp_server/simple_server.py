@@ -843,35 +843,98 @@ class CrossRefEventHandler(FileSystemEventHandler):
     def __init__(self, project_path: Path, hub_file_name: str):
         self.project_path = project_path
         self.hub_file_name = hub_file_name
-        self.hub_file_path = self.project_path / self.hub_file_name
 
     def _is_relevant_md_file(self, file_path_str: str) -> bool:
-        file_path = Path(file_path_str)
-        return file_path.suffix.lower() == ".md" and file_path.name != self.hub_file_name
+        return file_path_str.endswith('.md') and not file_path_str.endswith(self.hub_file_name)
+
+    def _has_crossref_header(self, file_path: Path) -> bool:
+        """Check if file already has a cross-reference header"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read(1000)  # Read first 1000 chars to check header
+                return content.startswith('---\nMANDATORY READING:')
+        except Exception:
+            return False
+
+    def _validate_crossref_header(self, file_path: Path) -> dict:
+        """Validate existing cross-reference header format"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+            if not content.startswith('---\nMANDATORY READING:'):
+                return {"valid": False, "reason": "no_header"}
+            
+            # Check if header references the correct hub file
+            header_end = content.find('---\n', 4)  # Find end of header
+            if header_end == -1:
+                return {"valid": False, "reason": "malformed_header"}
+                
+            header_content = content[4:header_end]
+            
+            # Check for proper cross-reference format
+            if f'Cross-reference: {self.hub_file_name}' in header_content:
+                return {"valid": True, "reason": "standard_format"}
+            elif 'Cross-reference:' in header_content:
+                return {"valid": False, "reason": "wrong_hub_reference"}
+            else:
+                return {"valid": False, "reason": "missing_cross_reference"}
+                
+        except Exception as e:
+            return {"valid": False, "reason": f"read_error: {str(e)}"}
 
     def on_created(self, event):
         if event.is_directory or not self._is_relevant_md_file(event.src_path):
             return
-        created_file_path = Path(event.src_path)
-        relative_path = str(created_file_path.relative_to(self.project_path))
         
-        all_md_in_project = [str(p.relative_to(self.project_path)) for p in self.project_path.rglob("*.md") 
-                               if p.name != self.hub_file_name and p != created_file_path and not p.is_dir()]
+        file_path = Path(event.src_path)
+        relative_path = str(file_path.relative_to(self.project_path))
         
-        # Add header immediately (fast operation)
-        add_crossref_header_result = add_crossref_header(str(created_file_path), self.hub_file_name, all_md_in_project[:2])
-
-        # Log header operation
-        transaction_logger.log_operation(
-            'add_header', 
-            relative_path, 
-            str(self.hub_file_path), 
-            'success' if add_crossref_header_result.get('success') else 'failed',
-            add_crossref_header_result.get('error')
+        print(f"🔍 Auto-watcher detected new file: {relative_path}")
+        
+        # Check if file already has a header
+        if self._has_crossref_header(file_path):
+            # Validate the existing header
+            validation = self._validate_crossref_header(file_path)
+            
+            if validation["valid"]:
+                print(f"✅ File already has valid cross-reference header: {relative_path}")
+                # Still queue for hub update since it's a new file
+                hub_update_queue.queue_hub_update(
+                    str(self.project_path / self.hub_file_name),
+                    'add',
+                    relative_path
+                )
+                transaction_logger.log_operation('queue_update', relative_path, self.hub_file_name, 'queued')
+            else:
+                print(f"⚠️ File has invalid header ({validation['reason']}): {relative_path}")
+                transaction_logger.log_operation('header_validation', relative_path, self.hub_file_name, 'invalid_header', validation['reason'])
+                
+                # Optionally fix the header if it's just wrong hub reference
+                if validation['reason'] == 'wrong_hub_reference':
+                    print(f"🔧 Attempting to fix header hub reference: {relative_path}")
+                    # This would require a header migration function - for now just log it
+                    transaction_logger.log_operation('header_migration_needed', relative_path, self.hub_file_name, 'detected')
+        else:
+            print(f"➕ Adding cross-reference header to: {relative_path}")
+            
+            # Add header to new file without existing header
+            result = add_crossref_header(str(file_path), self.hub_file_name)
+            
+            if result.get('success'):
+                transaction_logger.log_operation('add_header', relative_path, self.hub_file_name, 'success')
+                print(f"✅ Header added successfully: {relative_path}")
+            else:
+                transaction_logger.log_operation('add_header', relative_path, self.hub_file_name, 'failed', result.get('error'))
+                print(f"❌ Failed to add header: {relative_path} - {result.get('error')}")
+        
+        # Queue hub update for the new file
+        hub_update_queue.queue_hub_update(
+            str(self.project_path / self.hub_file_name),
+            'add',
+            relative_path
         )
-
-        # Queue hub update (batched operation)
-        hub_update_queue.queue_hub_update(str(self.hub_file_path), 'add', relative_path)
+        transaction_logger.log_operation('queue_update', relative_path, self.hub_file_name, 'queued')
 
     def on_deleted(self, event):
         if event.is_directory or not self._is_relevant_md_file(event.src_path):
@@ -883,13 +946,13 @@ class CrossRefEventHandler(FileSystemEventHandler):
         relative_path = str(deleted_file_path.relative_to(self.project_path))
         
         # Queue hub update for removal (batched operation)
-        hub_update_queue.queue_hub_update(str(self.hub_file_path), 'remove', relative_path)
+        hub_update_queue.queue_hub_update(str(self.project_path / self.hub_file_name), 'remove', relative_path)
         
         # Log deletion operation
         transaction_logger.log_operation(
             'file_deleted', 
             relative_path, 
-            str(self.hub_file_path), 
+            str(self.project_path / self.hub_file_name), 
             'queued'
         )
 
@@ -907,7 +970,7 @@ class CrossRefEventHandler(FileSystemEventHandler):
 
         # Handle source file removal
         if src_is_relevant:
-            hub_update_queue.queue_hub_update(str(self.hub_file_path), 'remove', relative_src_path)
+            hub_update_queue.queue_hub_update(str(self.project_path / self.hub_file_name), 'remove', relative_src_path)
         
         # Handle destination file addition
         if dest_is_relevant:
@@ -918,13 +981,13 @@ class CrossRefEventHandler(FileSystemEventHandler):
             add_crossref_header(str(dest_path_obj), self.hub_file_name, all_md_in_project[:2])
 
             # Queue hub update (batched operation)
-            hub_update_queue.queue_hub_update(str(self.hub_file_path), 'add', relative_dest_path)
+            hub_update_queue.queue_hub_update(str(self.project_path / self.hub_file_name), 'add', relative_dest_path)
         
         # Log move operation
         transaction_logger.log_operation(
             'file_moved', 
             f"{relative_src_path} -> {relative_dest_path}", 
-            str(self.hub_file_path), 
+            str(self.project_path / self.hub_file_name), 
             'queued',
             metadata={'src_relevant': src_is_relevant, 'dest_relevant': dest_is_relevant}
         )
@@ -1450,13 +1513,14 @@ def get_tool_documentation() -> dict:
             },
             
             "extract_pdf_to_markdown": {
-                "description": "Extract PDF content to cross-referenced markdown files with universal intelligent cross-referencing for any book type",
+                "description": "Extract PDF content to cross-referenced markdown files with intelligent cross-referencing",
                 "parameters": {
                     "pdf_path": {"required": True, "type": "string", "description": "Path to the PDF file to extract"},
                     "output_dir": {"required": False, "type": "string", "description": "Output directory for extracted files (defaults to same as PDF location)"},
                     "max_chunks": {"required": False, "type": "integer", "description": "Maximum number of chunks to create (default: 20)"},
                     "extraction_strategy": {"required": False, "type": "string", "description": "Extraction strategy (default: 'auto')"},
-                    "create_hub": {"required": False, "type": "boolean", "description": "Create hub file if true (default: True)"}
+                    "create_hub": {"required": False, "type": "boolean", "description": "Create hub file if true (default: True)"},
+                    "hub_file_name": {"required": False, "type": "string", "description": "Name of hub file to use (default: SYSTEM.md)"}
                 },
                 "returns": {
                     "success": "Boolean indicating success",
@@ -1471,7 +1535,8 @@ def get_tool_documentation() -> dict:
                     "detected_genres": "Automatically detected book genres with confidence scores",
                     "intelligent_cross_references": "Number of content-aware cross-references created",
                     "content_analysis": "Summary of genre-specific analysis performed",
-                    "summary": "Summary of operation"
+                    "summary": "Summary of operation",
+                    "hub_file_used": "Name of hub file used"
                 },
                 "use_cases": [
                     "Extracting any type of PDF book or document", 
@@ -2162,7 +2227,8 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         
         text = result["text"]
         page_count = result.get("page_count", 0)
-        quality_score = result.get("quality_score", 0.0)
+        # FIX: Use correct key name for quality score
+        quality_score = result.get("quality", 0.0)  # Changed from "quality_score" to "quality"
         strategy_used = result.get("strategy", "auto")
         
         task.update_status("text_extracted", 25)
@@ -2209,7 +2275,8 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         # Create individual chapter files with smart cross-references
         task.update_status("creating_files", 75)
         created_files = []
-        hub_file_name = f"{pdf_path_obj.stem}_index.md"
+        # FIX: Use proper hub file name from parameters
+        hub_file_name = params.get("hub_file_name", "SYSTEM.md")
         
         for i, chunk in enumerate(chunks, 1):
             filename = f"{pdf_path_obj.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
@@ -2218,7 +2285,7 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
             # Get smart cross-references for this chapter
             related_files = smart_cross_refs.get(filename, [])
             
-            # Create proper cross-reference header with intelligent relationships
+            # FIX: Create proper cross-reference header that references SYSTEM.md
             cross_ref_header = f"""---
 MANDATORY READING: You HAVE TO read {hub_file_name} first, then this file.
 Cross-reference: {hub_file_name}
@@ -2254,9 +2321,9 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             task.update_status(f"created_file_{i}", file_progress)
             await asyncio.sleep(0)  # Yield control
         
-        # Create hub/index file if requested
+        # Create hub/index file if requested - FIX: Only create if not using existing SYSTEM.md
         create_hub = params.get("create_hub", True)
-        if create_hub:
+        if create_hub and hub_file_name != "SYSTEM.md":
             task.update_status("creating_hub", 90)
             hub_path = output_dir / hub_file_name
             
@@ -2338,7 +2405,8 @@ Each chapter's "Related files" are selected based on actual content analysis, no
             "average_words_per_chapter": total_words // len(chunks),
             "quality_score": quality_score,
             "extraction_strategy": strategy_used,
-            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs])
+            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs]),
+            "hub_file_used": hub_file_name
         }
         
         task.complete(result)
@@ -2353,27 +2421,22 @@ def extract_pdf_to_markdown_async(
     pdf_path: str,
     output_dir: str = None,
     max_chunks: int = 50,
-    create_hub: bool = True
+    create_hub: bool = True,
+    hub_file_name: str = "SYSTEM.md"
 ) -> dict:
     """Start async PDF extraction to cross-referenced markdown files"""
     try:
-        pdf_path_obj = Path(pdf_path)
-        if not pdf_path_obj.exists():
-            return {"error": f"PDF file not found: {pdf_path}"}
-        
-        if not pdf_path_obj.suffix.lower() == '.pdf':
-            return {"error": f"File is not a PDF: {pdf_path}"}
-        
-        # Generate unique task ID
         task_id = str(uuid.uuid4())
         
-        # Create task
+        # Store extraction parameters including hub_file_name
         params = {
-            'output_dir': output_dir,
-            'max_chunks': max_chunks,
-            'create_hub': create_hub
+            "output_dir": output_dir,
+            "max_chunks": max_chunks,
+            "create_hub": create_hub,
+            "hub_file_name": hub_file_name
         }
         
+        # Create task
         task = PDFExtractionTask(task_id, pdf_path, params)
         active_tasks[task_id] = task
         
@@ -2383,15 +2446,19 @@ def extract_pdf_to_markdown_async(
         return {
             "success": True,
             "task_id": task_id,
-            "status": "started",
-            "pdf_path": pdf_path,
-            "estimated_time": "2-5 minutes for large PDFs",
-            "instructions": f"Use check_pdf_extraction_status('{task_id}') to monitor progress",
-            "message": "PDF extraction started in background with automatic cross-referencing"
+            "message": f"PDF extraction started for {Path(pdf_path).name}",
+            "status": "queued",
+            "parameters": {
+                "pdf_path": pdf_path,
+                "output_dir": output_dir,
+                "max_chunks": max_chunks,
+                "create_hub": create_hub,
+                "hub_file_name": hub_file_name
+            }
         }
         
     except Exception as e:
-        return {"error": f"Failed to start async extraction: {str(e)}"}
+        return {"error": f"Failed to start PDF extraction: {str(e)}", "success": False}
 
 @mcp.tool()
 def check_pdf_extraction_status(task_id: str) -> dict:
@@ -2449,10 +2516,11 @@ def list_pdf_extraction_tasks() -> dict:
 
 # --- End Async PDF Extraction Engine ---
 
-# Modify the existing extract_pdf_to_markdown function to include automatic cross-referencing
+# Fix 1: Update extract_pdf_to_markdown function to use proper hub file reference
 @mcp.tool()
 def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: int = 20, 
-                           create_hub: bool = True, extraction_strategy: str = "auto") -> dict:
+                           create_hub: bool = True, extraction_strategy: str = "auto", 
+                           hub_file_name: str = "SYSTEM.md") -> dict:
     """Extract PDF content to cross-referenced markdown files with intelligent cross-referencing"""
     try:
         pdf_path = Path(pdf_path)
@@ -2466,7 +2534,8 @@ def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: i
         
         text = result["text"]
         page_count = result.get("page_count", 0)
-        quality_score = result.get("quality_score", 0.0)
+        # FIX: Use correct key name for quality score
+        quality_score = result.get("quality", 0.0)  # Changed from "quality_score" to "quality"
         strategy_used = result.get("strategy", extraction_strategy)
         
         print(f"✅ PDF extraction completed. Quality: {quality_score:.2f}, Strategy: {strategy_used}")
@@ -2506,7 +2575,6 @@ def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: i
         
         # Create individual chapter files with smart cross-references
         created_files = []
-        hub_file_name = f"{pdf_path.stem}_index.md"
         
         for i, chunk in enumerate(chunks, 1):
             filename = f"{pdf_path.stem.lower().replace(' ', '').replace('-', '').replace('_', '')}_chapter_{i:02d}.md"
@@ -2515,7 +2583,7 @@ def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: i
             # Get smart cross-references for this chapter
             related_files = smart_cross_refs.get(filename, [])
             
-            # Create proper cross-reference header with intelligent relationships
+            # FIX: Create proper cross-reference header that references SYSTEM.md
             cross_ref_header = f"""---
 MANDATORY READING: You HAVE TO read {hub_file_name} first, then this file.
 Cross-reference: {hub_file_name}
@@ -2547,8 +2615,8 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             created_files.append(str(file_path))
             print(f"📄 Created: {filename} with {len(related_files)} intelligent cross-references")
         
-        # Create hub/index file if requested
-        if create_hub:
+        # Create hub/index file if requested - FIX: Only create if not using existing SYSTEM.md
+        if create_hub and hub_file_name != "SYSTEM.md":
             hub_path = output_dir / hub_file_name
             
             # Generate hub content with content analysis
@@ -2628,7 +2696,8 @@ Each chapter's "Related files" are selected based on actual content analysis, no
             "average_words_per_chapter": total_words // len(chunks),
             "quality_score": quality_score,
             "extraction_strategy": strategy_used,
-            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs])
+            "intelligent_cross_references": len([refs for refs in smart_cross_refs.values() if refs]),
+            "hub_file_used": hub_file_name
         }
         
     except Exception as e:
@@ -3216,17 +3285,37 @@ def verify_project_sync(project_path: str) -> dict:
                         if match:
                             hub_files.append(match.group(1))
         
-        # Check cross-reference headers
+        # Enhanced header checking with detailed validation
         missing_headers = []
         incorrect_headers = []
+        wrong_hub_reference = []
+        
         for md_file_rel in all_md_files:
             md_file_abs = project_path_obj / md_file_rel
             try:
                 with open(md_file_abs, 'r', encoding='utf-8') as f:
                     content = f.read()
-                    if not content.startswith('---\nMANDATORY READING:'):
-                        missing_headers.append(md_file_rel)
-                    elif 'Cross-reference: SYSTEM.md' not in content[:500]:
+                    
+                # Check if file has any header
+                if not content.startswith('---\nMANDATORY READING:'):
+                    missing_headers.append(md_file_rel)
+                else:
+                    # Check if header references correct hub file
+                    header_end = content.find('---\n', 4)
+                    if header_end != -1:
+                        header_content = content[4:header_end]
+                        
+                        if 'Cross-reference: SYSTEM.md' in header_content:
+                            # Header is correct
+                            pass
+                        elif 'Cross-reference:' in header_content:
+                            # Header exists but wrong hub reference
+                            wrong_hub_reference.append(md_file_rel)
+                        else:
+                            # Header missing cross-reference field
+                            incorrect_headers.append(md_file_rel)
+                    else:
+                        # Malformed header
                         incorrect_headers.append(md_file_rel)
             except Exception:
                 missing_headers.append(md_file_rel)
@@ -3235,7 +3324,9 @@ def verify_project_sync(project_path: str) -> dict:
         missing_from_hub = set(all_md_files) - set(hub_files)
         extra_in_hub = set(hub_files) - set(all_md_files)
         
-        sync_status = "perfect" if not missing_from_hub and not extra_in_hub and not missing_headers and not incorrect_headers else "issues_found"
+        # Calculate sync status
+        issues_found = bool(missing_from_hub or extra_in_hub or missing_headers or incorrect_headers or wrong_hub_reference)
+        sync_status = "issues_found" if issues_found else "perfect"
         
         # Log verification operation
         transaction_logger.log_operation(
@@ -3247,7 +3338,8 @@ def verify_project_sync(project_path: str) -> dict:
                 'total_files': len(all_md_files),
                 'files_in_hub': len(hub_files),
                 'missing_from_hub': len(missing_from_hub),
-                'missing_headers': len(missing_headers)
+                'missing_headers': len(missing_headers),
+                'wrong_hub_references': len(wrong_hub_reference)
             }
         )
         
@@ -3260,11 +3352,13 @@ def verify_project_sync(project_path: str) -> dict:
             "extra_in_hub": list(extra_in_hub),
             "missing_headers": missing_headers,
             "incorrect_headers": incorrect_headers,
+            "wrong_hub_reference": wrong_hub_reference,
             "recommendations": [
                 f"Add {len(missing_from_hub)} files to hub mandatory reading" if missing_from_hub else None,
                 f"Remove {len(extra_in_hub)} obsolete entries from hub" if extra_in_hub else None,
                 f"Add headers to {len(missing_headers)} files" if missing_headers else None,
-                f"Fix headers in {len(incorrect_headers)} files" if incorrect_headers else None
+                f"Fix headers in {len(incorrect_headers)} files" if incorrect_headers else None,
+                f"Migrate {len(wrong_hub_reference)} files from old hub references" if wrong_hub_reference else None
             ]
         }
         
@@ -3296,6 +3390,62 @@ def repair_project_sync(project_path: str, dry_run: bool = True) -> dict:
                 )
                 if result.get("success"):
                     operations_performed.append(f"Added header to {file_rel}")
+            
+            # Migrate headers with wrong hub references
+            for file_rel in verification.get("wrong_hub_reference", []):
+                # Add inline header migration logic
+                try:
+                    file_path = project_path_obj / file_rel
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    if content.startswith('---\nMANDATORY READING:'):
+                        header_end = content.find('---\n', 4)
+                        if header_end != -1:
+                            header_content = content[4:header_end]
+                            body_content = content[header_end + 4:]
+                            
+                            # Update header references
+                            lines = header_content.split('\n')
+                            updated_lines = []
+                            
+                            for line in lines:
+                                if line.startswith('MANDATORY READING:'):
+                                    updated_lines.append('MANDATORY READING: You HAVE TO read SYSTEM.md first, then this file.')
+                                elif line.startswith('Cross-reference:'):
+                                    updated_lines.append('Cross-reference: SYSTEM.md')
+                                elif line.startswith('Last updated:'):
+                                    updated_lines.append(f'Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+                                else:
+                                    updated_lines.append(line)
+                            
+                            # Reconstruct file
+                            new_content = f"""---
+{chr(10).join(updated_lines)}
+---
+{body_content}"""
+                            
+                            # Write back to file
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(new_content)
+                            
+                            operations_performed.append(f"Migrated header reference for {file_rel}")
+                        else:
+                            operations_performed.append(f"Failed to migrate {file_rel}: malformed header")
+                    else:
+                        operations_performed.append(f"Failed to migrate {file_rel}: no header found")
+                except Exception as e:
+                    operations_performed.append(f"Failed to migrate {file_rel}: {str(e)}")
+            
+            # Fix incorrect headers (re-add them)
+            for file_rel in verification.get("incorrect_headers", []):
+                result = add_crossref_header(
+                    str(project_path_obj / file_rel),
+                    "SYSTEM.md",
+                    verification.get("missing_from_hub", [])[:2]
+                )
+                if result.get("success"):
+                    operations_performed.append(f"Fixed header for {file_rel}")
             
             # Update hub file using the queue system
             if verification.get("missing_from_hub"):
