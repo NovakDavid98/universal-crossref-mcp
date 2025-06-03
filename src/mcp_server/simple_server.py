@@ -2227,9 +2227,9 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         
         text = result["text"]
         page_count = result.get("page_count", 0)
-        # FIX: Use correct key name for quality score
-        quality_score = result.get("quality", 0.0)  # Changed from "quality_score" to "quality"
-        strategy_used = result.get("strategy", "auto")
+        # FIX: Use correct key name for quality score (matches sync version)
+        quality_score = result.get("quality", 0.0)
+        strategy_used = result.get("strategy_used", "auto")  # Match sync version key
         
         task.update_status("text_extracted", 25)
         await asyncio.sleep(0)
@@ -2248,7 +2248,8 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         # Chunk the content
         task.update_status("chunking_content", 35)
         max_chunks = params.get("max_chunks", 50)
-        chunk_result = chunk_pdf_content(text, pdf_path.name, max_chunks)
+        # FIX: Use pdf_path_obj.name instead of pdf_path.name to avoid AttributeError
+        chunk_result = chunk_pdf_content(text, pdf_path_obj.name, max_chunks)
         if not chunk_result["success"]:
             task.fail(chunk_result.get("error", "Chunking failed"))
             return chunk_result
@@ -2257,7 +2258,7 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         task.update_status("content_chunked", 45)
         await asyncio.sleep(0)
         
-        # **NEW: Analyze content for intelligent cross-referencing**
+        # **Enhanced content analysis for intelligent cross-referencing**
         task.update_status("analyzing_content", 55)
         
         # Prepare content for analysis (filename -> content mapping)
@@ -2275,7 +2276,7 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
         # Create individual chapter files with smart cross-references
         task.update_status("creating_files", 75)
         created_files = []
-        # FIX: Use proper hub file name from parameters
+        # FIX: Use proper hub file name from parameters (matches sync version)
         hub_file_name = params.get("hub_file_name", "SYSTEM.md")
         
         for i, chunk in enumerate(chunks, 1):
@@ -2285,7 +2286,7 @@ async def process_pdf_async(task_id: str, pdf_path: str, params: dict) -> dict:
             # Get smart cross-references for this chapter
             related_files = smart_cross_refs.get(filename, [])
             
-            # FIX: Create proper cross-reference header that references SYSTEM.md
+            # FIX: Create proper cross-reference header that references SYSTEM.md (matches sync exactly)
             cross_ref_header = f"""---
 MANDATORY READING: You HAVE TO read {hub_file_name} first, then this file.
 Cross-reference: {hub_file_name}
@@ -2296,7 +2297,7 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 """
             
-            # Create chapter content
+            # Create chapter content (match sync version exactly)
             chapter_content = f"""# {chunk['title']}
 
 **Extracted from PDF**: {pdf_path_obj.name}
@@ -2327,7 +2328,7 @@ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             task.update_status("creating_hub", 90)
             hub_path = output_dir / hub_file_name
             
-            # Generate hub content with content analysis
+            # Generate hub content with content analysis (match sync version)
             hub_content = f"""# {pdf_path_obj.stem} - Complete Cross-Referenced Knowledge Base
 
 **Source**: {pdf_path_obj.name}  
@@ -2413,8 +2414,9 @@ Each chapter's "Related files" are selected based on actual content analysis, no
         return result
         
     except Exception as e:
-        task.fail(f"PDF extraction failed: {str(e)}")
-        return {"error": f"PDF extraction failed: {str(e)}", "success": False}
+        error_msg = f"PDF extraction failed: {str(e)}"
+        task.fail(error_msg)
+        return {"error": error_msg, "success": False}
 
 @mcp.tool()
 def extract_pdf_to_markdown_async(
@@ -2536,7 +2538,7 @@ def extract_pdf_to_markdown(pdf_path: str, output_dir: str = None, max_chunks: i
         page_count = result.get("page_count", 0)
         # FIX: Use correct key name for quality score
         quality_score = result.get("quality", 0.0)  # Changed from "quality_score" to "quality"
-        strategy_used = result.get("strategy", extraction_strategy)
+        strategy_used = result.get("strategy_used", extraction_strategy)  # Fixed key name
         
         print(f"✅ PDF extraction completed. Quality: {quality_score:.2f}, Strategy: {strategy_used}")
         
